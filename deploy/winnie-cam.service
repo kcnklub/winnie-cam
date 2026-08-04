@@ -1,0 +1,23 @@
+[Unit]
+Description=winnie-cam baby monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Adjust the path if you built elsewhere, and add flags as needed
+# (--hflip/--vflip for camera orientation, --width/--height/--fps, ...).
+ExecStart=/home/kymiller/winnie-cam/target/release/winnie-cam --source rpicam --width 1280 --height 720 --fps 15
+Restart=always
+RestartSec=5
+User=kymiller
+Group=kymiller
+Environment=RUST_LOG=info
+
+# Hardening: only what's actually needed to open the camera and bind a port.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

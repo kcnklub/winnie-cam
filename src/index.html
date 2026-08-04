@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>winnie-cam</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: #000;
+    overflow: hidden;
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #feed {
+    max-width: 100vw;
+    max-height: 100vh;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    background: #000;
+  }
+  #status {
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #eee;
+    font: 13px/1.4 system-ui, sans-serif;
+    backdrop-filter: blur(4px);
+    transition: opacity 0.3s ease;
+  }
+  #status.ok { opacity: 0.35; }
+  #dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #e33;
+    transition: background 0.2s ease;
+  }
+  #status.ok #dot { background: #2ecc71; }
+  #placeholder {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #888;
+    font: 16px system-ui, sans-serif;
+    text-align: center;
+    padding: 24px;
+  }
+</style>
+</head>
+<body>
+  <div id="placeholder">Connecting to camera&hellip;</div>
+  <img id="feed" alt="" style="display:none">
+  <div id="status"><span id="dot"></span><span id="label">connecting</span></div>
+
+<script>
+(function () {
+  const img = document.getElementById('feed');
+  const placeholder = document.getElementById('placeholder');
+  const status = document.getElementById('status');
+  const label = document.getElementById('label');
+
+  const RECONNECT_DELAY_MS = 2000;
+  const HEALTH_POLL_MS = 5000;
+  const STALE_AFTER_SECS = 6;
+
+  let reconnectTimer = null;
+
+  function setStatus(ok, text) {
+    status.classList.toggle('ok', ok);
+    label.textContent = text;
+  }
+
+  function connect() {
+    // Cache-busting query param: an <img> won't re-request the same URL.
+    img.src = '/stream.mjpeg?ts=' + Date.now();
+  }
+
+  img.addEventListener('load', function () {
+    placeholder.style.display = 'none';
+    img.style.display = '';
+    setStatus(true, 'live');
+  });
+
+  img.addEventListener('error', function () {
+    img.style.display = 'none';
+    placeholder.style.display = '';
+    placeholder.textContent = 'Camera feed lost – reconnecting…';
+    setStatus(false, 'reconnecting');
+    if (reconnectTimer === null) {
+      reconnectTimer = setTimeout(function () {
+        reconnectTimer = null;
+        connect();
+      }, RECONNECT_DELAY_MS);
+    }
+  });
+
+  // A stalled multipart connection doesn't always fire `error` (it can just
+  // sit there with no new parts), so also poll /healthz and force a
+  // reconnect if frames have stopped arriving. For a baby monitor, a frozen
+  // frame that *looks* live is the worst failure mode, so this is worth the
+  // extra request.
+  async function pollHealth() {
+    try {
+      const res = await fetch('/healthz', { cache: 'no-store' });
+      const data = await res.json();
+      if (data.seconds_since_last_frame !== null && data.seconds_since_last_frame > STALE_AFTER_SECS) {
+        setStatus(false, 'stale, reconnecting');
+        connect();
+      }
+    } catch (e) {
+      setStatus(false, 'server unreachable');
+    }
+  }
+
+  connect();
+  setInterval(pollHealth, HEALTH_POLL_MS);
+})();
+</script>
+</body>
+</html>

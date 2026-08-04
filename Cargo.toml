@@ -1,0 +1,22 @@
+[package]
+name = "winnie-cam"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "net", "sync", "signal", "time"] }
+axum = "0.8"
+tokio-stream = "0.1"
+tokio-util = "0.7"
+async-stream = "0.3"
+futures = "0.3"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+v4l = "0.14"
+
+[[bin]]
+name = "winnie-cam"
+path = "src/main.rs"
