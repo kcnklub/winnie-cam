@@ -26,6 +26,14 @@
     object-fit: contain;
     background: #000;
   }
+  /* Positioned above #feed by DOM order (both non-static-vs-fixed still
+     paint in source order among elements of the same stacking context), so
+     no z-index bookkeeping is needed anywhere on this page. */
+  #overlay {
+    position: fixed;
+    pointer-events: none;
+    display: none;
+  }
   #status {
     position: fixed;
     top: 12px;
@@ -50,6 +58,34 @@
     transition: background 0.2s ease;
   }
   #status.ok #dot { background: #2ecc71; }
+  /* Same recipe as #status, mirrored to the opposite corner. */
+  #detect-toggle {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border: 0;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #eee;
+    font: 13px/1.4 system-ui, sans-serif;
+    backdrop-filter: blur(4px);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: opacity 0.3s ease;
+  }
+  #detect-toggle.on { opacity: 0.35; }
+  #detect-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #555;
+    transition: background 0.2s ease;
+  }
+  #detect-toggle.on #detect-dot { background: #2ecc71; }
   #placeholder {
     position: fixed;
     inset: 0;
@@ -66,7 +102,9 @@
 <body>
   <div id="placeholder">Connecting to camera&hellip;</div>
   <img id="feed" alt="" style="display:none">
+  <canvas id="overlay"></canvas>
   <div id="status"><span id="dot"></span><span id="label">connecting</span></div>
+  <button id="detect-toggle" type="button"><span id="detect-dot"></span><span id="detect-label">detect</span></button>
 
 <script>
 (function () {
@@ -74,10 +112,17 @@
   const placeholder = document.getElementById('placeholder');
   const status = document.getElementById('status');
   const label = document.getElementById('label');
+  const canvas = document.getElementById('overlay');
+  const ctx = canvas.getContext('2d');
+  const toggle = document.getElementById('detect-toggle');
 
   const RECONNECT_DELAY_MS = 2000;
   const HEALTH_POLL_MS = 5000;
   const STALE_AFTER_SECS = 6;
+  // How long a detection payload is trusted before the overlay clears it -
+  // covers a dropped SSE connection that hasn't fired `onerror` yet, so a
+  // stale box never sits over live video looking like a current result.
+  const DETECTION_STALE_MS = 5000;
 
   let reconnectTimer = null;
 
@@ -95,6 +140,7 @@
     placeholder.style.display = 'none';
     img.style.display = '';
     setStatus(true, 'live');
+    drawOverlay();
   });
 
   img.addEventListener('error', function () {
@@ -123,13 +169,187 @@
         setStatus(false, 'stale, reconnecting');
         connect();
       }
+      // Only show the toggle once the server actually has detection
+      // enabled - same poll that already runs every 5s, no extra request.
+      // #detect-toggle's own CSS rule sets `display: none`, so clearing
+      // the inline style (`= ''`) would just fall back to that rule and
+      // never actually show it - it has to be set to the layout value the
+      // rest of that rule assumes ('flex', for its `align-items`/`gap`).
+      const available = data.detect && data.detect !== 'off';
+      toggle.style.display = available ? 'flex' : 'none';
+      if (!available && detectOpen()) stopDetect();
     } catch (e) {
       setStatus(false, 'server unreachable');
     }
   }
 
+  // --- Detection overlay -----------------------------------------------
+  //
+  // The server streams normalized (0..1) box fractions over SSE at
+  // /detections; this section's job is entirely coordinate mapping (source
+  // frame fraction -> rendered pixel) and the toggle's on/off lifecycle.
+  // Boxes are never computed here - only drawn.
+
+  let es = null;
+  let lastPayload = null;
+  let lastPayloadAt = 0;
+
+  function detectOpen() {
+    return es !== null;
+  }
+
+  /// Where the *painted* image actually sits, in viewport pixels. #feed is
+  /// `max-width:100vw; max-height:100vh; width:auto; height:auto;
+  /// object-fit:contain` inside a flex-centered body - with width/height
+  /// auto the element box is already aspect-fitted today, but this is
+  /// written in the general object-fit:contain form anyway so it keeps
+  /// working if that CSS ever changes to e.g. width:100%.
+  function imageRect() {
+    const r = img.getBoundingClientRect();
+    const nw = img.naturalWidth, nh = img.naturalHeight;
+    // naturalWidth/height are 0 while a reconnect is in flight, and the
+    // element box can be zero-sized before the very first frame paints.
+    if (!nw || !nh || !r.width || !r.height) return null;
+    const s = Math.min(r.width / nw, r.height / nh);
+    const dw = nw * s, dh = nh * s;
+    return {
+      left: r.left + (r.width - dw) / 2,
+      top: r.top + (r.height - dh) / 2,
+      width: dw,
+      height: dh,
+    };
+  }
+
+  /// Positions/sizes the canvas over the rendered image and returns that
+  /// rect, or null (and hides the canvas) if there's nothing to draw over
+  /// yet. `body { overflow: hidden }` means viewport coordinates from
+  /// getBoundingClientRect() are usable directly with position:fixed - no
+  /// scroll offset to account for.
+  function syncCanvas() {
+    const rect = imageRect();
+    if (!rect) {
+      canvas.style.display = 'none';
+      return null;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.left = rect.left + 'px';
+    canvas.style.top = rect.top + 'px';
+    canvas.style.width = rect.width + 'px';
+    canvas.style.height = rect.height + 'px';
+    const bw = Math.round(rect.width * dpr), bh = Math.round(rect.height * dpr);
+    // Assigning width/height clears the canvas - only touch it on a real
+    // size change, and only after the CSS size above is already correct.
+    if (canvas.width !== bw || canvas.height !== bh) {
+      canvas.width = bw;
+      canvas.height = bh;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS pixels from here on
+    // Same trap as the detect-toggle button: #overlay's own CSS rule sets
+    // `display: none`, so clearing the inline style (`= ''`) falls straight
+    // back to that rule and the canvas stays invisible - has to be set to
+    // an actual displayed value.
+    canvas.style.display = 'block';
+    return rect;
+  }
+
+  function drawOverlay() {
+    const rect = syncCanvas();
+    if (!rect) return;
+    ctx.clearRect(0, 0, rect.width, rect.height);
+    if (!lastPayload || !lastPayload.dets) return;
+
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#2ecc71'; // same green as #status.ok #dot
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.textBaseline = 'top';
+
+    for (const d of lastPayload.dets) {
+      // Normalized 0..1 of the source frame -> rendered pixels. This is
+      // exactly why the server normalizes: the client never learns the
+      // capture resolution.
+      const x = d.x * rect.width, y = d.y * rect.height;
+      const w = d.w * rect.width, h = d.h * rect.height;
+      ctx.strokeRect(x, y, w, h);
+
+      const text = d.label + ' ' + Math.round(d.score * 100) + '%';
+      const textWidth = ctx.measureText(text).width;
+      const ty = Math.max(0, y - 16);
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(x, ty, textWidth + 8, 16);
+      ctx.fillStyle = '#eee';
+      ctx.fillText(text, x + 4, ty + 2);
+    }
+  }
+
+  function startDetect() {
+    if (es) return;
+    es = new EventSource('/detections');
+    es.onmessage = function (e) {
+      try {
+        lastPayload = JSON.parse(e.data);
+        lastPayloadAt = Date.now();
+        drawOverlay();
+      } catch (err) {
+        // Malformed payload - ignore this tick rather than throw, an
+        // EventSource error handler doesn't fire for a JSON.parse failure.
+      }
+    };
+    es.onerror = function () {
+      // EventSource retries on its own; just stop trusting stale boxes
+      // until a message arrives again.
+      lastPayload = null;
+      drawOverlay();
+    };
+    toggle.classList.add('on');
+    try { localStorage.setItem('winnie-detect', '1'); } catch (e) {}
+  }
+
+  function stopDetect() {
+    if (es) {
+      es.close();
+      es = null;
+    }
+    lastPayload = null;
+    drawOverlay();
+    toggle.classList.remove('on');
+    try { localStorage.setItem('winnie-detect', '0'); } catch (e) {}
+  }
+
+  toggle.addEventListener('click', function () {
+    if (detectOpen()) stopDetect(); else startDetect();
+  });
+
+  window.addEventListener('resize', drawOverlay);
+  if (window.ResizeObserver) {
+    new ResizeObserver(drawOverlay).observe(img); // catches orientation change
+  }
+
+  // A backgrounded tab has no business keeping the Pi busy running
+  // inference for a phone screen nobody's looking at.
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      if (es) { es.close(); es = null; }
+    } else if (toggle.classList.contains('on')) {
+      startDetect();
+    }
+  });
+
+  // Never leave a phantom box sitting over live video if the SSE stream
+  // goes quiet without ever firing `onerror`.
+  setInterval(function () {
+    if (lastPayload && Date.now() - lastPayloadAt > DETECTION_STALE_MS) {
+      lastPayload = null;
+      drawOverlay();
+    }
+  }, 1000);
+
   connect();
   setInterval(pollHealth, HEALTH_POLL_MS);
+  pollHealth(); // don't wait 5s for the toggle to first appear
+
+  let restoredOpen = false;
+  try { restoredOpen = localStorage.getItem('winnie-detect') === '1'; } catch (e) {}
+  if (restoredOpen) startDetect();
 })();
 </script>
 </body>

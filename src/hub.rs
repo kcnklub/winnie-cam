@@ -21,6 +21,12 @@ const CHANNEL_CAPACITY: usize = 8;
 pub struct HubStats {
     pub uptime: Duration,
     pub frames_captured: u64,
+    /// Every live broadcast receiver, not just browser viewers - once
+    /// detection is enabled, `detect::pump_loop` holds one of these too.
+    /// `src/web.rs`'s `/healthz` handler tracks browser viewers separately
+    /// for that reason, so this field currently only has test coverage;
+    /// kept as a general-purpose stat rather than removed.
+    #[allow(dead_code)]
     pub subscribers: usize,
     /// `None` if no frame has ever been captured.
     pub since_last_frame: Option<Duration>,
