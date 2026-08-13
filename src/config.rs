@@ -49,13 +49,13 @@ pub struct Config {
     /// Enable person detection. Off by default: inference is by far the
     /// most expensive thing this program can do, and video capture must
     /// never be affected by it. See `--model`.
-    #[arg(long)]
+    #[arg(long, requires = "model")]
     pub detect: bool,
 
     /// Path to a YOLOv8/YOLO11 ONNX model, exported with a fixed square
     /// input and without built-in NMS (`yolo export ... dynamic=False` -
     /// see the README's model export section). Required by `--detect`.
-    #[arg(long, requires = "detect")]
+    #[arg(long)]
     pub model: Option<PathBuf>,
 
     /// Model input side length in pixels. Must match the size the model

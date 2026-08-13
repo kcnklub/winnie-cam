@@ -154,6 +154,13 @@ fn frac(v: f32) -> f32 {
     if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 }
 }
 
+/// Clamps a single pixel coordinate into `0..=extent` (the frame's width or
+/// height), non-finite values pinned to 0. Used to clamp box corners
+/// *before* deriving w/h from them - see [`detections_json`].
+fn clamp_coord(v: f32, extent: f32) -> f32 {
+    if v.is_finite() { v.clamp(0.0, extent) } else { 0.0 }
+}
+
 fn empty_json() -> String {
     "{\"w\":0,\"h\":0,\"seq\":0,\"ms\":0.0,\"dets\":[]}".to_string()
 }
@@ -174,10 +181,18 @@ pub fn detections_json(src_w: u32, src_h: u32, seq: u64, ms: f32, boxes: &[BBox]
         if i > 0 {
             out.push(',');
         }
-        let x = frac(b.x1 / src_w as f32);
-        let y = frac(b.y1 / src_h as f32);
-        let w = frac((b.x2 - b.x1) / src_w as f32);
-        let h = frac((b.y2 - b.y1) / src_h as f32);
+        // Clamp the corners to the frame *first*, then derive w/h from the
+        // clamped corners - clamping origin and extent independently would
+        // keep the off-frame portion of a box that overhangs an edge (e.g.
+        // a person standing partly out of shot), drawing it too wide/tall.
+        let x1 = clamp_coord(b.x1, src_w as f32);
+        let y1 = clamp_coord(b.y1, src_h as f32);
+        let x2 = clamp_coord(b.x2, src_w as f32);
+        let y2 = clamp_coord(b.y2, src_h as f32);
+        let x = frac(x1 / src_w as f32);
+        let y = frac(y1 / src_h as f32);
+        let w = frac((x2 - x1) / src_w as f32);
+        let h = frac((y2 - y1) / src_h as f32);
         let score = frac(b.score);
         out.push_str(&format!(
             "{{\"x\":{x:.4},\"y\":{y:.4},\"w\":{w:.4},\"h\":{h:.4},\
@@ -214,6 +229,18 @@ mod tests {
              {\"x\":0.0250,\"y\":0.0500,\"w\":0.2500,\"h\":0.1000,\
              \"score\":0.8765,\"label\":\"person\"}]}"
         );
+    }
+
+    #[test]
+    fn a_box_overhanging_the_left_edge_keeps_only_its_visible_width() {
+        // 1280-wide frame, box from x=-50 to x=250: 300px total, but only
+        // 250px of it is actually in frame. Clamping origin and extent
+        // independently would report w=300/1280; clamping the corners
+        // first (this fix) must report w=250/1280.
+        let boxes = [bbox(-50.0, 0.0, 250.0, 100.0, 0.9)];
+        let json = detections_json(1280, 720, 1, 1.0, &boxes);
+        assert!(json.contains("\"x\":0.0000"), "{json}");
+        assert!(json.contains(&format!("\"w\":{:.4}", 250.0 / 1280.0)), "{json}");
     }
 
     #[test]

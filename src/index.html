@@ -169,13 +169,16 @@
         setStatus(false, 'stale, reconnecting');
         connect();
       }
-      // Only show the toggle once the server actually has detection
-      // enabled - same poll that already runs every 5s, no extra request.
+      // Only show the toggle once the server actually has a usable model -
+      // same poll that already runs every 5s, no extra request. Deliberately
+      // *not* `data.detect !== 'off'`: that would also count 'loading' and
+      // 'error' as available, and a model that failed to load never sends
+      // a single box - the toggle would look functional but do nothing.
       // #detect-toggle's own CSS rule sets `display: none`, so clearing
       // the inline style (`= ''`) would just fall back to that rule and
       // never actually show it - it has to be set to the layout value the
       // rest of that rule assumes ('flex', for its `align-items`/`gap`).
-      const available = data.detect && data.detect !== 'off';
+      const available = data.detect === 'ready';
       toggle.style.display = available ? 'flex' : 'none';
       if (!available && detectOpen()) stopDetect();
     } catch (e) {

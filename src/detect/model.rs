@@ -73,13 +73,17 @@ fn validate_output_shape(model: &Plan) -> anyhow::Result<()> {
 /// candidates above `threshold`. Boxes are in model-input pixel space
 /// (0..side), corner form - callers map them back to source-frame fractions
 /// with [`crate::detect::letterbox::Letterbox`].
+///
+/// Takes a `TValue` (rather than a bare `Tensor`) so a caller reusing the
+/// same input buffer across passes (see `detect::run_one_pass`) can hand
+/// over an `Arc` clone instead of a value that would force a copy.
 pub fn infer(
     plan: &Plan,
-    input: Tensor,
+    input: TValue,
     class: usize,
     threshold: f32,
 ) -> anyhow::Result<Vec<BBox>> {
-    let outputs = plan.run(tvec!(input.into())).context("running inference")?;
+    let outputs = plan.run(tvec!(input)).context("running inference")?;
     let out = outputs[0]
         .as_slice::<f32>()
         .context("reading model output as f32")?;
@@ -200,7 +204,7 @@ mod tests {
             .expect("set WINNIE_CAM_TEST_MODEL to an exported .onnx path");
         let plan = load(Path::new(&path), 320).expect("model should load and optimize");
 
-        let input = Tensor::zero::<f32>(&[1, 3, 320, 320]).unwrap();
+        let input = Tensor::zero::<f32>(&[1, 3, 320, 320]).unwrap().into_tvalue();
         let boxes = infer(&plan, input, PERSON_CLASS, 0.99).expect("inference should run");
         // An all-zero (mid-grey after normalization) input isn't expected to
         // contain a confident person - this mainly proves the plumbing works

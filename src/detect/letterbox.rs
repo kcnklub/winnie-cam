@@ -39,8 +39,13 @@ impl Letterbox {
             scale,
             new_w,
             new_h,
-            pad_x: (side.saturating_sub(new_w)) as f32 / 2.0,
-            pad_y: (side.saturating_sub(new_h)) as f32 / 2.0,
+            // Integer division, not `as f32 / 2.0`: odd padding (e.g. side
+            // 320, new_h 261 -> a difference of 59) must floor to a whole
+            // pixel here, the same whole pixel `fill_tensor` pastes at -
+            // otherwise `fill_tensor`'s integer paste offset and
+            // `to_source`'s float subtraction disagree by half a pixel.
+            pad_x: (side.saturating_sub(new_w) / 2) as f32,
+            pad_y: (side.saturating_sub(new_h) / 2) as f32,
         }
     }
 
@@ -94,8 +99,8 @@ impl Letterbox {
         // Inverse scale: for each destination pixel inside the resized
         // (non-pad) region, find the source pixel it samples from.
         let inv_scale = 1.0 / self.scale;
-        let x0 = self.pad_x.round() as usize;
-        let y0 = self.pad_y.round() as usize;
+        let x0 = self.pad_x as usize;
+        let y0 = self.pad_y as usize;
 
         for dy in 0..self.new_h as usize {
             let sy = ((dy as f32 + 0.5) * inv_scale - 0.5).clamp(0.0, self.src_h as f32 - 1.0);
@@ -104,14 +109,12 @@ impl Letterbox {
             let wy = sy - y0f;
 
             for dx in 0..self.new_w as usize {
-                let sx =
-                    ((dx as f32 + 0.5) * inv_scale - 0.5).clamp(0.0, self.src_w as f32 - 1.0);
+                let sx = ((dx as f32 + 0.5) * inv_scale - 0.5).clamp(0.0, self.src_w as f32 - 1.0);
                 let x0f = sx.floor();
                 let x1f = (x0f + 1.0).min(self.src_w as f32 - 1.0);
                 let wx = sx - x0f;
 
-                let (x0i, x1i, y0i, y1i) =
-                    (x0f as usize, x1f as usize, y0f as usize, y1f as usize);
+                let (x0i, x1i, y0i, y1i) = (x0f as usize, x1f as usize, y0f as usize, y1f as usize);
 
                 let px_out = x0 + dx;
                 let py_out = y0 + dy;
@@ -192,6 +195,52 @@ mod tests {
     }
 
     #[test]
+    fn odd_padding_is_a_whole_pixel() {
+        // 352x288 (CIF USB webcam) at side 320: new_h floors to 261, an
+        // odd difference (59) from 320. Before this fix, pad_y was 29.5 -
+        // a value `fill_tensor` rounded one way and `to_source` used
+        // unrounded, disagreeing by half a pixel. Both must now agree on
+        // the same whole-pixel value.
+        let lb = Letterbox::new(352, 288, 320);
+        assert_eq!((lb.new_w, lb.new_h), (320, 261));
+        assert_eq!(lb.pad_x, 0.0);
+        assert_eq!(lb.pad_y, 29.0);
+    }
+
+    #[test]
+    fn fill_tensor_and_to_source_agree_on_odd_padding() {
+        let lb = Letterbox::new(352, 288, 320);
+        // Solid red source frame.
+        let mut rgb = vec![0u8; 352 * 288 * 3];
+        for px in rgb.chunks_exact_mut(3) {
+            px[0] = 255;
+        }
+        let mut dst = vec![0.0f32; 3 * 320 * 320];
+        lb.fill_tensor(&rgb, &mut dst);
+
+        // fill_tensor pastes the resized image starting at model row
+        // `pad_y` - that row must already be resized-image content (red),
+        // not padding, confirming fill_tensor's paste offset is exactly
+        // `pad_y`, not `pad_y.round()` computed some other way.
+        let side = 320usize;
+        let row = lb.pad_y as usize;
+        assert_eq!(
+            dst[row * side],
+            1.0,
+            "row at pad_y should be resized content, not padding"
+        );
+
+        // And to_source's inverse of that same model row must land back
+        // at source row 0 - the two directions using one shared value is
+        // what guarantees this, rather than it happening to work out.
+        let (_, sy) = lb.to_source(0.0, lb.pad_y);
+        assert!(
+            (sy - 0.0).abs() < 1e-3,
+            "to_source(0, pad_y) should map to source y=0, got {sy}"
+        );
+    }
+
+    #[test]
     fn fill_tensor_pads_with_the_training_time_grey() {
         let lb = Letterbox::new(1280, 720, 320);
         let rgb = vec![0u8; 1280 * 720 * 3];
@@ -220,7 +269,10 @@ mod tests {
         let (cx, cy) = (160usize, 160usize);
         let r = dst[0 * side * side + cy * side + cx];
         let g = dst[1 * side * side + cy * side + cx];
-        assert!((r - 1.0).abs() < 1e-6, "expected full-intensity red, got {r}");
+        assert!(
+            (r - 1.0).abs() < 1e-6,
+            "expected full-intensity red, got {r}"
+        );
         assert_eq!(g, 0.0);
     }
 }

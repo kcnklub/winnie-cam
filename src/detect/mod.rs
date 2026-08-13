@@ -38,6 +38,7 @@ pub mod model;
 pub mod nms;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -46,6 +47,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+use tract_onnx::prelude::{IntoTValue, Tensor};
 
 use crate::config::Config;
 use crate::hub::FrameHub;
@@ -68,9 +70,9 @@ pub struct DetectConfig {
 
 impl DetectConfig {
     /// `None` if `--detect` wasn't passed; an error if it was passed
-    /// without `--model` (clap's `requires` should already prevent this,
-    /// but a config built by hand - e.g. in a test - might not go through
-    /// clap).
+    /// without `--model` (clap's `requires = "model"` on `--detect` already
+    /// prevents this at parse time, but a config built by hand - e.g. in a
+    /// test - might not go through clap).
     pub fn from_config(cfg: &Config) -> anyhow::Result<Option<Self>> {
         if !cfg.detect {
             return Ok(None);
@@ -114,13 +116,28 @@ impl DetectHandle {
     /// OS reclaims the thread when the process exits.
     pub async fn join(self) -> anyhow::Result<()> {
         self.pump.await?;
-        let join = tokio::task::spawn_blocking(move || self.worker.join());
-        match tokio::time::timeout(WORKER_JOIN_TIMEOUT, join).await {
-            Ok(result) => {
-                result?
-                    .map_err(|_| anyhow::anyhow!("detection worker thread panicked"))?;
+
+        // Deliberately a bare `std::thread`, not `spawn_blocking`: tokio's
+        // `Runtime::drop` blocks indefinitely for outstanding blocking
+        // tasks, so a `spawn_blocking` join here would still hang the
+        // process for the full in-flight pass once `#[tokio::main]` drops
+        // the runtime after this function returns - the exact hang
+        // `WORKER_JOIN_TIMEOUT` exists to bound. A detached `std::thread`
+        // is invisible to that, so the timeout below actually bounds
+        // shutdown; the thread itself is simply abandoned to the OS
+        // (see the doc comment above for why that's safe).
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(self.worker.join());
+        });
+        match tokio::time::timeout(WORKER_JOIN_TIMEOUT, rx).await {
+            Ok(Ok(result)) => {
+                result.map_err(|_| anyhow::anyhow!("detection worker thread panicked"))?;
             }
-            Err(_) => tracing::warn!(
+            // The joiner thread hung up without sending - can only happen
+            // if it panicked, which `std::thread::JoinHandle::join` itself
+            // doesn't do; treated the same as a timeout.
+            Ok(Err(_)) | Err(_) => tracing::warn!(
                 timeout_secs = WORKER_JOIN_TIMEOUT.as_secs(),
                 "detection worker didn't finish its in-flight pass in time; \
                  shutting down without waiting for it"
@@ -195,8 +212,25 @@ async fn pump_loop(
                     // Non-blocking hand-off: if the worker is mid-inference,
                     // this frame is simply dropped, so detection latency
                     // never compounds.
-                    if let Err(TrySendError::Full(_)) = work_tx.try_send(frame) {
-                        tracing::trace!("detector still busy; skipping frame");
+                    match work_tx.try_send(frame) {
+                        Ok(()) => {}
+                        Err(TrySendError::Full(_)) => {
+                            tracing::trace!("detector still busy; skipping frame");
+                        }
+                        // The worker thread returned (most commonly: model
+                        // load failed) and dropped its receiver. Without this
+                        // arm the match above never matches `Closed`, so the
+                        // pump would spin forever on every capture frame
+                        // instead of noticing the worker is gone. Mark
+                        // detection as errored too, in case the worker died
+                        // *after* reaching `Ready` (e.g. a panic mid-pass) -
+                        // otherwise `/healthz` and the overlay toggle would
+                        // keep reporting detection as working.
+                        Err(TrySendError::Closed(_)) => {
+                            tracing::warn!("detection worker is gone; stopping the pump");
+                            det_hub.set_state(DetectState::Error);
+                            break;
+                        }
                     }
                 }
                 Err(RecvError::Lagged(n)) => tracing::trace!(n, "detector fell behind capture"),
@@ -236,11 +270,20 @@ fn worker_loop(cfg: DetectConfig, det_hub: DetectionHub, mut work_rx: mpsc::Rece
 
     let mut rgb: Vec<u8> = Vec::new();
     let side = cfg.side as usize;
-    let mut nchw = vec![0f32; 3 * side * side];
+    // Allocated once and reused every pass via `Arc::get_mut` in
+    // `run_one_pass` - see that function's doc comment.
+    let mut scratch: Arc<Tensor> = match Tensor::zero::<f32>(&[1, 3, side, side]) {
+        Ok(t) => Arc::new(t),
+        Err(err) => {
+            tracing::error!(error = ?err, "failed to allocate detection input tensor");
+            det_hub.set_state(DetectState::Error);
+            return;
+        }
+    };
 
     while let Some(jpeg) = work_rx.blocking_recv() {
         let started = Instant::now();
-        match run_one_pass(&plan, &cfg, &jpeg, &mut rgb, &mut nchw) {
+        match run_one_pass(&plan, &cfg, &jpeg, &mut rgb, &mut scratch) {
             Ok((src_w, src_h, boxes)) => {
                 let ms = started.elapsed().as_secs_f32() * 1000.0;
                 tracing::debug!(count = boxes.len(), ms, "detection pass complete");
@@ -253,21 +296,35 @@ fn worker_loop(cfg: DetectConfig, det_hub: DetectionHub, mut work_rx: mpsc::Rece
 }
 
 /// Decode -> letterbox -> tensor fill -> inference -> NMS, for one frame.
-/// `rgb`/`nchw` are reused across calls so nothing allocates per pass.
+/// `rgb`/`scratch` are reused across calls so nothing allocates per pass.
 fn run_one_pass(
     plan: &model::Plan,
     cfg: &DetectConfig,
     jpeg: &[u8],
     rgb: &mut Vec<u8>,
-    nchw: &mut [f32],
+    scratch: &mut Arc<Tensor>,
 ) -> anyhow::Result<(u32, u32, Vec<nms::BBox>)> {
     let (src_w, src_h) = decode_rgb(jpeg, rgb)?;
     let lb = Letterbox::new(src_w, src_h, cfg.side);
-    lb.fill_tensor(rgb, nchw);
 
+    // Fill `scratch` in place rather than building a fresh Tensor from
+    // `nchw` every pass. `Arc::get_mut` only returns `None` if something
+    // else is still holding a clone of the *previous* pass's input (tract
+    // shouldn't retain one past `plan.run` returning, but this falls back
+    // to a fresh allocation instead of panicking if that's ever untrue).
     let side = cfg.side as usize;
-    let tensor = tract_onnx::prelude::Tensor::from_shape(&[1, 3, side, side], nchw)?;
-    let model_boxes = model::infer(plan, tensor, PERSON_CLASS, cfg.threshold)?;
+    {
+        let tensor = match Arc::get_mut(scratch) {
+            Some(t) => t,
+            None => {
+                *scratch = Arc::new(Tensor::zero::<f32>(&[1, 3, side, side])?);
+                Arc::get_mut(scratch).expect("just replaced with a fresh, uniquely-owned Arc")
+            }
+        };
+        lb.fill_tensor(rgb, tensor.as_slice_mut::<f32>()?);
+    }
+
+    let model_boxes = model::infer(plan, scratch.clone().into_tvalue(), PERSON_CLASS, cfg.threshold)?;
     let suppressed = nms::nms(model_boxes, cfg.iou, 50);
 
     // Map each surviving box from model-input pixels back to source-frame

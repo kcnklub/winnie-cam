@@ -133,18 +133,31 @@ async fn healthz(State(state): State<AppState>) -> Response {
     ([(header::CONTENT_TYPE, "application/json")], body).into_response()
 }
 
-/// Logs when a viewer's stream ends, whichever way that happens (client
-/// disconnect drops the response body mid-poll; the loop otherwise only
-/// exits if the hub itself is torn down). Dropping the async generator's
-/// locals - including this guard - is the only reliable "connection over"
-/// signal available here.
+/// RAII pair for `viewers`: incrementing (and logging "connected") happens
+/// in `new`, decrementing (and logging "disconnected") happens in `Drop`,
+/// so the two can never come apart. This used to be split - increment in
+/// the handler, decrement inside the `async_stream` generator body - which
+/// broke for any response whose body is never polled (e.g. axum 0.8 routes
+/// `HEAD /stream.mjpeg` to this same handler and then strips the body
+/// without polling it), permanently leaking +1 per such request. Now the
+/// guard is constructed once in the handler and simply moved into the
+/// generator; a moved-but-never-polled generator still drops its locals
+/// when the response is dropped, so the pairing holds on every path.
 struct DisconnectLog {
     viewers: Arc<AtomicUsize>,
 }
 
+impl DisconnectLog {
+    fn new(viewers: Arc<AtomicUsize>) -> Self {
+        let count = viewers.fetch_add(1, Ordering::Relaxed) + 1;
+        tracing::info!(subscribers = count, "viewer connected");
+        Self { viewers }
+    }
+}
+
 impl Drop for DisconnectLog {
     fn drop(&mut self) {
-        let remaining = self.viewers.fetch_sub(1, Ordering::Relaxed) - 1;
+        let remaining = self.viewers.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
         tracing::info!(subscribers = remaining, "viewer disconnected");
     }
 }
@@ -152,14 +165,12 @@ impl Drop for DisconnectLog {
 async fn stream_mjpeg(State(state): State<AppState>) -> Response {
     let hub = state.hub.clone();
     let mut rx = hub.subscribe();
-    let count = state.viewers.fetch_add(1, Ordering::Relaxed) + 1;
-    tracing::info!(subscribers = count, "viewer connected");
+    let log_on_drop = DisconnectLog::new(state.viewers.clone());
     let first_frame = hub.latest();
-    let viewers = state.viewers.clone();
     let shutdown = state.shutdown.clone();
 
     let body_stream = async_stream::stream! {
-        let _log_on_drop = DisconnectLog { viewers };
+        let _log_on_drop = log_on_drop;
 
         // Paint something immediately instead of waiting on the next capture.
         if let Some(frame) = first_frame {

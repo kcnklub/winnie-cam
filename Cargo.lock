@@ -2098,7 +2098,6 @@ dependencies = [
  "tracing-subscriber",
  "tract-onnx",
  "v4l",
- "zune-core",
  "zune-jpeg",
 ]
 
