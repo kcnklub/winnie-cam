@@ -3,6 +3,8 @@ mod config;
 mod detect;
 mod hub;
 mod jpeg;
+mod json;
+mod motion;
 mod web;
 
 use anyhow::Context;
@@ -25,6 +27,7 @@ async fn main() -> anyhow::Result<()> {
     // Extracted before `cfg` goes out of scope at the end of this block -
     // `Config` itself isn't stored anywhere past startup (see config.rs).
     let detect_cfg = detect::DetectConfig::from_config(&cfg)?;
+    let motion_cfg = motion::MotionConfig::from_config(&cfg);
 
     let hub = FrameHub::new();
     let shutdown = CancellationToken::new();
@@ -42,12 +45,33 @@ async fn main() -> anyhow::Result<()> {
 
     // Spawned before the listener binds: model loading happens on the
     // detector's own worker thread, so it never delays the video stream
-    // coming up (see `detect::spawn`'s doc comment).
-    let detect_handle = detect_cfg
-        .map(|cfg| detect::spawn(cfg, hub.clone(), shutdown.clone()));
-    let (detect_hub, detect_task) = match detect_handle {
-        Some((hub, task)) => (Some(hub), Some(task)),
-        None => (None, None),
+    // coming up (see `detect::spawn`'s doc comment). Motion is spawned
+    // from the very `DetectionHub` that spawning the detector just
+    // produced, rather than from a second independent check of
+    // `motion_cfg` - see `motion`'s module doc comment for why that makes
+    // "detect but no motion" structurally unreachable.
+    let (detect_hub, detect_task, motion_hub, motion_task) = match detect_cfg {
+        Some(dcfg) => {
+            let (det_hub, det_task) = detect::spawn(dcfg, hub.clone(), shutdown.clone());
+            let (motion_hub, motion_task) = match motion_cfg {
+                Some(mcfg) => {
+                    let (mhub, mtask) =
+                        motion::spawn(mcfg, hub.clone(), det_hub.clone(), shutdown.clone());
+                    (Some(mhub), Some(mtask))
+                }
+                // Unreachable today - both configs are gated on the same
+                // `cfg.detect` flag - but fail soft rather than panicking
+                // if that ever changes.
+                None => {
+                    tracing::warn!(
+                        "detection enabled without a motion config; motion events disabled"
+                    );
+                    (None, None)
+                }
+            };
+            (Some(det_hub), Some(det_task), motion_hub, motion_task)
+        }
+        None => (None, None, None, None),
     };
 
     let listener = tokio::net::TcpListener::bind(cfg.bind)
@@ -55,7 +79,7 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("binding to {}", cfg.bind))?;
     tracing::info!(bind = %cfg.bind, "winnie-cam listening");
 
-    let app = web::router(web::AppState::new(hub, detect_hub, shutdown.clone()));
+    let app = web::router(web::AppState::new(hub, detect_hub, motion_hub, shutdown.clone()));
     let server_shutdown = shutdown.clone();
     axum::serve(listener, app)
         .with_graceful_shutdown(async move { server_shutdown.cancelled().await })
@@ -71,6 +95,9 @@ async fn main() -> anyhow::Result<()> {
         .context("capture supervisor task panicked")?;
     if let Some(task) = detect_task {
         task.join().await.context("detection task panicked")?;
+    }
+    if let Some(task) = motion_task {
+        task.join().await.context("motion task panicked")?;
     }
 
     Ok(())

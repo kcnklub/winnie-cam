@@ -7,11 +7,12 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 
 use crate::detect::nms::BBox;
+use crate::json::{clamp_coord, frac};
 
 /// Lifecycle state, surfaced on `/healthz` so the frontend knows whether to
 /// show the overlay toggle at all.
@@ -49,11 +50,25 @@ impl DetectState {
 /// `last_inference_ms`/`seconds_since_last_pass` - `at`/`inference_ms` are
 /// read directly off whatever the watch channel currently holds instead of
 /// being tracked a second time.
+///
+/// `src_w`/`src_h`/`boxes` exist alongside the pre-serialized `json` so
+/// `motion::pump_loop` can read the raw, source-frame-pixel boxes without
+/// re-parsing JSON - see [`DetectionHub::latest`].
 pub struct DetectionFrame {
     pub seq: u64,
     pub json: String,
     pub inference_ms: f32,
+    pub src_w: u32,
+    pub src_h: u32,
+    pub boxes: Vec<BBox>,
     at: Instant,
+}
+
+impl DetectionFrame {
+    /// How long ago this pass ran.
+    pub fn age(&self) -> Duration {
+        self.at.elapsed()
+    }
 }
 
 struct Inner {
@@ -73,6 +88,9 @@ impl DetectionHub {
             seq: 0,
             json: empty_json(),
             inference_ms: 0.0,
+            src_w: 0,
+            src_h: 0,
+            boxes: Vec::new(),
             at: Instant::now(),
         }));
         Self {
@@ -111,6 +129,9 @@ impl DetectionHub {
             seq,
             json,
             inference_ms,
+            src_w,
+            src_h,
+            boxes: boxes.to_vec(),
             at: Instant::now(),
         });
         // send_replace, not send: stores the value even with zero
@@ -121,6 +142,17 @@ impl DetectionHub {
 
     pub fn subscribe(&self) -> watch::Receiver<Arc<DetectionFrame>> {
         self.inner.tx.subscribe()
+    }
+
+    /// Borrow-only peek at the latest pass, for `motion::pump_loop` to read
+    /// the current person box without pinning detection to its active rate.
+    /// Deliberately not built on `subscribe()`: creating a receiver would
+    /// inflate `subscriber_count()`, which `detect::pump_loop` uses to
+    /// decide whether to run at `--detect-fps` or `--detect-idle-fps` (see
+    /// that function's doc comment) - a caller that only wants to peek at
+    /// the latest value, not stream updates, must not affect that decision.
+    pub fn latest(&self) -> Arc<DetectionFrame> {
+        self.inner.tx.borrow().clone()
     }
 
     pub fn subscriber_count(&self) -> usize {
@@ -144,21 +176,6 @@ impl Default for DetectionHub {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Formats a 0..1 fraction safely. JSON has no NaN/Infinity literal, and
-/// `format!("{:.4}", f32::NAN)` prints the bare word `NaN` - one degenerate
-/// box would break `JSON.parse` for every viewer, so every number that
-/// reaches the wire goes through this first.
-fn frac(v: f32) -> f32 {
-    if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 }
-}
-
-/// Clamps a single pixel coordinate into `0..=extent` (the frame's width or
-/// height), non-finite values pinned to 0. Used to clamp box corners
-/// *before* deriving w/h from them - see [`detections_json`].
-fn clamp_coord(v: f32, extent: f32) -> f32 {
-    if v.is_finite() { v.clamp(0.0, extent) } else { 0.0 }
 }
 
 fn empty_json() -> String {
@@ -288,5 +305,30 @@ mod tests {
         hub.publish(1280, 720, &[], 1.0);
         let mut rx = hub.subscribe();
         assert_eq!(rx.borrow_and_update().seq, 2);
+    }
+
+    #[test]
+    fn latest_returns_the_boxes_from_the_most_recent_publish() {
+        let hub = DetectionHub::new();
+        let boxes = [bbox(10.0, 20.0, 30.0, 40.0, 0.9)];
+        hub.publish(1280, 720, &boxes, 12.0);
+        let latest = hub.latest();
+        assert_eq!(latest.seq, 1);
+        assert_eq!(latest.src_w, 1280);
+        assert_eq!(latest.src_h, 720);
+        assert_eq!(latest.boxes.as_slice(), &boxes);
+    }
+
+    #[test]
+    fn latest_does_not_affect_subscriber_count() {
+        // `latest()` must be a borrow-only peek - motion::pump_loop relies
+        // on it never inflating `subscriber_count()`, which
+        // `detect::pump_loop` uses to decide its own sample rate (see that
+        // function's doc comment).
+        let hub = DetectionHub::new();
+        assert_eq!(hub.subscriber_count(), 0);
+        let _frame = hub.latest();
+        let _frame2 = hub.latest();
+        assert_eq!(hub.subscriber_count(), 0);
     }
 }

@@ -86,6 +86,60 @@
     transition: background 0.2s ease;
   }
   #detect-toggle.on #detect-dot { background: #2ecc71; }
+  /* Bottom-left, informational only - unlike #detect-toggle this isn't a
+     button; it's just visible whenever motion events are available (i.e.
+     whenever --detect is on - motion has no separate switch). */
+  #activity {
+    position: fixed;
+    bottom: 12px;
+    left: 12px;
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 12px;
+    max-width: 220px;
+    border-radius: 12px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #eee;
+    font: 12px/1.4 system-ui, sans-serif;
+    backdrop-filter: blur(4px);
+  }
+  #activity-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  #activity-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #555;
+    transition: background 0.2s ease;
+  }
+  /* Amber, not red/green: "moving" isn't an error state the way a lost
+     stream is, so it shouldn't borrow #status's red/green vocabulary. */
+  #activity.moving #activity-dot { background: #e8a33d; }
+  #activity-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 110px;
+    overflow-y: auto;
+  }
+  #activity-list li {
+    opacity: 0.85;
+    white-space: nowrap;
+  }
+  #activity-list li#activity-empty {
+    opacity: 0.55;
+    font-style: italic;
+  }
   #placeholder {
     position: fixed;
     inset: 0;
@@ -105,6 +159,10 @@
   <canvas id="overlay"></canvas>
   <div id="status"><span id="dot"></span><span id="label">connecting</span></div>
   <button id="detect-toggle" type="button"><span id="detect-dot"></span><span id="detect-label">detect</span></button>
+  <div id="activity">
+    <div id="activity-pill"><span id="activity-dot"></span><span id="activity-label">still</span></div>
+    <ul id="activity-list"><li id="activity-empty">no motion yet</li></ul>
+  </div>
 
 <script>
 (function () {
@@ -115,6 +173,9 @@
   const canvas = document.getElementById('overlay');
   const ctx = canvas.getContext('2d');
   const toggle = document.getElementById('detect-toggle');
+  const activity = document.getElementById('activity');
+  const activityLabel = document.getElementById('activity-label');
+  const activityList = document.getElementById('activity-list');
 
   const RECONNECT_DELAY_MS = 2000;
   const HEALTH_POLL_MS = 5000;
@@ -181,6 +242,15 @@
       const available = data.detect === 'ready';
       toggle.style.display = available ? 'flex' : 'none';
       if (!available && detectOpen()) stopDetect();
+
+      // Motion has no separate toggle - it's available exactly when
+      // detection is, so it rides the same `available` check.
+      activity.style.display = available ? 'flex' : 'none';
+      if (available) {
+        if (!document.hidden) startEvents();
+      } else {
+        stopEvents();
+      }
     } catch (e) {
       setStatus(false, 'server unreachable');
     }
@@ -322,6 +392,90 @@
     if (detectOpen()) stopDetect(); else startDetect();
   });
 
+  // --- Activity panel (motion events) -----------------------------------
+  //
+  // The server streams motion_started/motion_stopped events over SSE at
+  // /events, plus a `snapshot` event on connect carrying recent history
+  // from its ring buffer. This section only renders what the server
+  // decided - all the debouncing/thresholding happens server-side.
+
+  const MAX_ACTIVITY_ITEMS = 8;
+  let eventsSource = null;
+  let activityEvents = [];
+
+  function formatClockTime(unixMs) {
+    return new Date(unixMs).toLocaleTimeString([], {
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+  }
+
+  function formatDuration(ms) {
+    if (ms < 1000) return ms + 'ms';
+    const s = ms / 1000;
+    return (s >= 10 ? Math.round(s) : s.toFixed(1)) + 's';
+  }
+
+  function renderActivityList() {
+    activityList.innerHTML = '';
+    if (activityEvents.length === 0) {
+      const li = document.createElement('li');
+      li.id = 'activity-empty';
+      li.textContent = 'no motion yet';
+      activityList.appendChild(li);
+      return;
+    }
+    // Newest first, capped so the list can't grow without bound.
+    const recent = activityEvents.slice(-MAX_ACTIVITY_ITEMS).reverse();
+    for (const e of recent) {
+      const li = document.createElement('li');
+      li.textContent = e.kind === 'started'
+        ? formatClockTime(e.at) + ' – motion started'
+        : formatClockTime(e.at) + ' – stopped (' + formatDuration(e.duration_ms || 0) + ')';
+      activityList.appendChild(li);
+    }
+  }
+
+  function setActivityState(moving) {
+    activity.classList.toggle('moving', moving);
+    activityLabel.textContent = moving ? 'moving' : 'still';
+  }
+
+  function startEvents() {
+    if (eventsSource) return;
+    eventsSource = new EventSource('/events');
+    eventsSource.addEventListener('snapshot', function (e) {
+      try {
+        const data = JSON.parse(e.data);
+        activityEvents = Array.isArray(data.events) ? data.events : [];
+        renderActivityList();
+        const last = activityEvents[activityEvents.length - 1];
+        setActivityState(!!last && last.kind === 'started');
+      } catch (err) {
+        // Malformed payload - ignore this tick.
+      }
+    });
+    eventsSource.addEventListener('motion', function (e) {
+      try {
+        const ev = JSON.parse(e.data);
+        activityEvents.push(ev);
+        if (activityEvents.length > 50) activityEvents.shift();
+        renderActivityList();
+        setActivityState(ev.kind === 'started');
+      } catch (err) {
+        // Malformed payload - ignore this tick.
+      }
+    });
+    // EventSource retries connections on its own; nothing to do here.
+    eventsSource.onerror = function () {};
+  }
+
+  function stopEvents() {
+    if (eventsSource) {
+      eventsSource.close();
+      eventsSource = null;
+    }
+  }
+
   window.addEventListener('resize', drawOverlay);
   if (window.ResizeObserver) {
     new ResizeObserver(drawOverlay).observe(img); // catches orientation change
@@ -332,8 +486,10 @@
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) {
       if (es) { es.close(); es = null; }
-    } else if (toggle.classList.contains('on')) {
-      startDetect();
+      stopEvents();
+    } else {
+      if (toggle.classList.contains('on')) startDetect();
+      if (activity.style.display !== 'none') startEvents();
     }
   });
 

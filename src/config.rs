@@ -46,9 +46,12 @@ pub struct Config {
     #[arg(long, default_value = "0.0.0.0:8080")]
     pub bind: SocketAddr,
 
-    /// Enable person detection. Off by default: inference is by far the
-    /// most expensive thing this program can do, and video capture must
-    /// never be affected by it. See `--model`.
+    /// Enable person detection *and* motion events. Off by default:
+    /// inference is by far the most expensive thing this program can do,
+    /// and video capture must never be affected by it. There is no separate
+    /// switch for motion - it's derived from the person box, so it comes
+    /// along with `--detect` automatically. See `--model` and the
+    /// `--motion-*` flags below to tune it.
     #[arg(long, requires = "model")]
     pub detect: bool,
 
@@ -82,6 +85,57 @@ pub struct Config {
     /// IoU threshold for non-maximum suppression, 0.0-1.0.
     #[arg(long, default_value_t = 0.45)]
     pub detect_iou: f32,
+
+    /// Motion samples per second. Runs independently of `--detect-fps`/
+    /// `--detect-idle-fps` - motion diffs raw frames, it doesn't run the
+    /// model - but only produces events while a fresh-enough person box
+    /// exists (see `--motion-box-ttl-ms`).
+    #[arg(long, default_value_t = 2.0)]
+    pub motion_fps: f32,
+
+    /// Side length of the grid motion is diffed on (grid_side x grid_side
+    /// grayscale cells). Larger catches finer movement but costs more CPU.
+    #[arg(long, default_value_t = 64)]
+    pub motion_grid: u32,
+
+    /// Minimum grayscale change (0-255) for a grid cell to count as
+    /// "changed" between samples.
+    #[arg(long, default_value_t = 12)]
+    pub motion_pixel_delta: u8,
+
+    /// Fraction of cells inside the person box that must have changed for a
+    /// sample to count as motion, 0.0-1.0.
+    #[arg(long, default_value_t = 0.08)]
+    pub motion_threshold: f32,
+
+    /// How long motion must persist, in milliseconds, before a
+    /// `motion_started` event fires.
+    #[arg(long, default_value_t = 700)]
+    pub motion_sustain_ms: u64,
+
+    /// How long stillness must persist, in milliseconds, before a
+    /// `motion_stopped` event fires.
+    #[arg(long, default_value_t = 4000)]
+    pub motion_quiet_ms: u64,
+
+    /// Minimum gap, in milliseconds, between a `motion_stopped` event and
+    /// the next `motion_started` - keeps a score hovering near the
+    /// threshold from machine-gunning events.
+    #[arg(long, default_value_t = 3000)]
+    pub motion_cooldown_ms: u64,
+
+    /// Ignore person boxes older than this many milliseconds when deciding
+    /// whether there's a subject to diff motion against. Defaults to twice
+    /// `--detect-idle-fps`'s ~5s period, so a box survives one missed
+    /// detection pass.
+    #[arg(long, default_value_t = 10000)]
+    pub motion_box_ttl_ms: u64,
+
+    /// Dilate each person box by this fraction of its own width/height
+    /// before masking, so a limb moving just outside the last known box
+    /// still counts.
+    #[arg(long, default_value_t = 0.10)]
+    pub motion_box_margin: f32,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]

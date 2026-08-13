@@ -25,12 +25,16 @@
 //! # Idle vs active throttling
 //!
 //! Detection runs continuously once `--detect` is passed - even with no
-//! viewer watching - so there's a standing signal to build alerting on
-//! later. But it runs much slower when nobody has the overlay open
-//! (`--detect-idle-fps`, default 0.2/s) and speeds up to `--detect-fps`
-//! only while at least one `/detections` SSE connection is open. Sustained
-//! inference is this app's dominant CPU/heat cost on a Pi, so idling it
-//! matters.
+//! viewer watching - so there's a standing signal to build alerting on. In
+//! fact `--detect` now drives exactly that: the `motion` module reads the
+//! latest person box off [`hub::DetectionHub::latest`] to power motion
+//! events (`/events`), so the idle rate below isn't just a CPU-saving
+//! measure anymore - it's also what keeps a person box fresh enough for
+//! motion to mask against. Detection runs much slower when nobody has the
+//! overlay open (`--detect-idle-fps`, default 0.2/s) and speeds up to
+//! `--detect-fps` only while at least one `/detections` SSE connection is
+//! open. Sustained inference is this app's dominant CPU/heat cost on a Pi,
+//! so idling it still matters.
 
 pub mod hub;
 pub mod letterbox;
@@ -343,8 +347,9 @@ fn run_one_pass(
 }
 
 /// Decodes a JPEG into `rgb` (resized in place as needed) and returns
-/// `(width, height)`.
-fn decode_rgb(jpeg: &[u8], rgb: &mut Vec<u8>) -> anyhow::Result<(u32, u32)> {
+/// `(width, height)`. `pub(crate)`: also used by `motion::worker_loop`,
+/// which needs the same decode without the letterbox/tensor steps below.
+pub(crate) fn decode_rgb(jpeg: &[u8], rgb: &mut Vec<u8>) -> anyhow::Result<(u32, u32)> {
     use zune_jpeg::JpegDecoder;
     use zune_jpeg::zune_core::bytestream::ZCursor;
 
@@ -369,7 +374,9 @@ fn decode_rgb(jpeg: &[u8], rgb: &mut Vec<u8>) -> anyhow::Result<(u32, u32)> {
     Ok((w as u32, h as u32))
 }
 
-fn fps_to_interval(fps: f32) -> Duration {
+/// `pub(crate)`: also used by `motion::pump_loop` for its own `--motion-fps`
+/// throttle.
+pub(crate) fn fps_to_interval(fps: f32) -> Duration {
     Duration::from_secs_f32(1.0 / fps.max(0.01))
 }
 
@@ -383,16 +390,19 @@ fn fps_to_interval(fps: f32) -> Duration {
 /// module's doc comment) and have it take effect on the very next tick,
 /// instead of waiting out whatever interval happened to be in effect when
 /// the previous pass was scheduled.
-struct Throttle {
+///
+/// `pub(crate)`: `motion::pump_loop` reuses this same throttle shape for its
+/// own sampling rate.
+pub(crate) struct Throttle {
     last_ran: Option<Instant>,
 }
 
 impl Throttle {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { last_ran: None }
     }
 
-    fn should_run(&mut self, now: Instant, interval: Duration) -> bool {
+    pub(crate) fn should_run(&mut self, now: Instant, interval: Duration) -> bool {
         match self.last_ran {
             Some(t) if now < t + interval => false,
             // Recording `now`, not `t + interval`: after a long stall (e.g.
