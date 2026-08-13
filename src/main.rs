@@ -3,6 +3,7 @@ mod config;
 mod detect;
 mod hub;
 mod jpeg;
+mod json;
 mod web;
 
 use anyhow::Context;
@@ -22,9 +23,6 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = Config::parse();
-    // Extracted before `cfg` goes out of scope at the end of this block -
-    // `Config` itself isn't stored anywhere past startup (see config.rs).
-    let detect_cfg = detect::DetectConfig::from_config(&cfg)?;
 
     let hub = FrameHub::new();
     let shutdown = CancellationToken::new();
@@ -42,11 +40,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Spawned before the listener binds: model loading happens on the
     // detector's own worker thread, so it never delays the video stream
-    // coming up (see `detect::spawn`'s doc comment).
-    let detect_handle = detect_cfg
-        .map(|cfg| detect::spawn(cfg, hub.clone(), shutdown.clone()));
-    let (detect_hub, detect_task) = match detect_handle {
-        Some((hub, task)) => (Some(hub), Some(task)),
+    // coming up (see `detect::spawn`'s doc comment). `spawn_all` is the
+    // single entry point for everything detection-derived - person
+    // detection and motion events both - so there's no separate motion
+    // config to extract or gate on here; see `detect`'s module doc comment.
+    let detection = detect::spawn_all(&cfg, hub.clone(), shutdown.clone())?;
+    let (detect_hub, motion_hub) = match &detection {
+        Some(d) => (Some(d.detect_hub.clone()), Some(d.motion_hub.clone())),
         None => (None, None),
     };
 
@@ -55,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("binding to {}", cfg.bind))?;
     tracing::info!(bind = %cfg.bind, "winnie-cam listening");
 
-    let app = web::router(web::AppState::new(hub, detect_hub, shutdown.clone()));
+    let app = web::router(web::AppState::new(hub, detect_hub, motion_hub, shutdown.clone()));
     let server_shutdown = shutdown.clone();
     axum::serve(listener, app)
         .with_graceful_shutdown(async move { server_shutdown.cancelled().await })
@@ -69,8 +69,8 @@ async fn main() -> anyhow::Result<()> {
     capture_task
         .await
         .context("capture supervisor task panicked")?;
-    if let Some(task) = detect_task {
-        task.join().await.context("detection task panicked")?;
+    if let Some(d) = detection {
+        d.join().await.context("detection task panicked")?;
     }
 
     Ok(())

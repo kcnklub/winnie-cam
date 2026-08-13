@@ -1,6 +1,11 @@
-//! Person detection: decodes captured JPEG frames, runs them through a
-//! YOLOv8/YOLO11 ONNX model via `tract`, and publishes normalized boxes for
-//! the live overlay.
+//! Detection: decodes captured JPEG frames, runs them through a
+//! YOLOv8/YOLO11 ONNX model via `tract`, and publishes normalized person
+//! boxes for the live overlay. This module is the home for *all*
+//! detection-derived features, not just the model pass itself - the
+//! [`motion`] submodule builds motion events on top of the person box this
+//! module produces, and is spawned from here (see [`spawn_all`]) rather
+//! than existing as a separate top-level module, since it has no meaning
+//! without a person box to mask against.
 //!
 //! # Why detection can never stall capture
 //!
@@ -25,16 +30,21 @@
 //! # Idle vs active throttling
 //!
 //! Detection runs continuously once `--detect` is passed - even with no
-//! viewer watching - so there's a standing signal to build alerting on
-//! later. But it runs much slower when nobody has the overlay open
-//! (`--detect-idle-fps`, default 0.2/s) and speeds up to `--detect-fps`
-//! only while at least one `/detections` SSE connection is open. Sustained
-//! inference is this app's dominant CPU/heat cost on a Pi, so idling it
-//! matters.
+//! viewer watching - so there's a standing signal to build alerting on. In
+//! fact `--detect` now drives exactly that: the [`motion`] submodule reads
+//! the latest person box off [`hub::DetectionHub::latest`] to power motion
+//! events (`/events`), so the idle rate below isn't just a CPU-saving
+//! measure anymore - it's also what keeps a person box fresh enough for
+//! motion to mask against. Detection runs much slower when nobody has the
+//! overlay open (`--detect-idle-fps`, default 0.2/s) and speeds up to
+//! `--detect-fps` only while at least one `/detections` SSE connection is
+//! open. Sustained inference is this app's dominant CPU/heat cost on a Pi,
+//! so idling it still matters.
 
 pub mod hub;
 pub mod letterbox;
 pub mod model;
+pub mod motion;
 pub mod nms;
 
 use std::path::PathBuf;
@@ -174,6 +184,46 @@ pub fn spawn(
     let pump = tokio::spawn(pump_loop(cfg, hub, det_hub.clone(), work_tx, shutdown));
 
     (det_hub, DetectHandle { pump, worker })
+}
+
+/// Handles for everything `spawn_all` started: the person detector and,
+/// bundled with it, motion events. `detect_hub`/`motion_hub` are public for
+/// the web layer to hold in `AppState`; the two task handles are private -
+/// nothing outside this module needs them individually, only [`Self::join`].
+pub struct Handles {
+    pub detect_hub: DetectionHub,
+    pub motion_hub: motion::hub::MotionHub,
+    detect: DetectHandle,
+    motion: motion::MotionHandle,
+}
+
+impl Handles {
+    /// Joins both halves for a clean shutdown - see [`DetectHandle::join`]
+    /// and `motion::MotionHandle::join` for what each one actually waits on.
+    pub async fn join(self) -> anyhow::Result<()> {
+        self.detect.join().await?;
+        self.motion.join().await?;
+        Ok(())
+    }
+}
+
+/// The single entry point `main` uses: spawns the person detector and, since
+/// motion has no switch of its own (it's derived from the person box this
+/// produces - see the [`motion`] module doc comment), spawns motion right
+/// alongside it from the very [`DetectionHub`] this call produces. Returns
+/// `Ok(None)` when `--detect` wasn't passed, so there's nothing to spawn.
+pub fn spawn_all(
+    cfg: &Config,
+    hub: FrameHub,
+    shutdown: CancellationToken,
+) -> anyhow::Result<Option<Handles>> {
+    let Some(detect_cfg) = DetectConfig::from_config(cfg)? else {
+        return Ok(None);
+    };
+    let (detect_hub, detect) = spawn(detect_cfg, hub.clone(), shutdown.clone());
+    let motion_cfg = motion::MotionConfig::from_config(cfg);
+    let (motion_hub, motion) = motion::spawn(motion_cfg, hub, detect_hub.clone(), shutdown);
+    Ok(Some(Handles { detect_hub, motion_hub, detect, motion }))
 }
 
 /// Async side: throttles and coalesces frames from the [`FrameHub`], and
@@ -343,7 +393,11 @@ fn run_one_pass(
 }
 
 /// Decodes a JPEG into `rgb` (resized in place as needed) and returns
-/// `(width, height)`.
+/// `(width, height)`. Private, but reachable from [`motion::worker_loop`]
+/// as `super::decode_rgb` since that's a child module of this one and
+/// Rust's privacy rule extends a private item's visibility to descendants
+/// of its defining module - no `pub(crate)` needed just to share it with a
+/// submodule.
 fn decode_rgb(jpeg: &[u8], rgb: &mut Vec<u8>) -> anyhow::Result<(u32, u32)> {
     use zune_jpeg::JpegDecoder;
     use zune_jpeg::zune_core::bytestream::ZCursor;
@@ -369,6 +423,9 @@ fn decode_rgb(jpeg: &[u8], rgb: &mut Vec<u8>) -> anyhow::Result<(u32, u32)> {
     Ok((w as u32, h as u32))
 }
 
+/// Private, but shared with [`motion::pump_loop`] for its own
+/// `--motion-fps` throttle the same way [`decode_rgb`] is - see that
+/// function's doc comment.
 fn fps_to_interval(fps: f32) -> Duration {
     Duration::from_secs_f32(1.0 / fps.max(0.01))
 }
@@ -383,6 +440,10 @@ fn fps_to_interval(fps: f32) -> Duration {
 /// module's doc comment) and have it take effect on the very next tick,
 /// instead of waiting out whatever interval happened to be in effect when
 /// the previous pass was scheduled.
+///
+/// Private, but [`motion::pump_loop`] reuses this same throttle shape for
+/// its own sampling rate - see [`decode_rgb`]'s doc comment for why that
+/// doesn't need `pub(crate)`.
 struct Throttle {
     last_ran: Option<Instant>,
 }

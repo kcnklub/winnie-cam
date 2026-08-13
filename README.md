@@ -8,11 +8,12 @@ local network - v1 of a baby monitor. It serves an MJPEG stream (plain
 - a **USB webcam** over V4L2 - which is also how this runs during
   development on a regular laptop with no CSI camera at all.
 
-It can also run a simple person detector against the live feed and overlay
-the boxes on the stream - see "Person detection" below. Sound detection,
-recording, auth, and HTTPS are still not part of this version; see "Out of
-scope" in the plan this was built from if you're picking this back up
-later.
+It can also run a simple person detector against the live feed, overlay the
+boxes on the stream, and turn sustained movement into `motion_started`/
+`motion_stopped` events - see "Person detection" and "Motion events" below.
+Sound detection, recording, auth, and HTTPS are still not part of this
+version; see "Out of scope" in the plan this was built from if you're
+picking this back up later.
 
 ## Building
 
@@ -79,6 +80,13 @@ quality, bind address, ...).
   never needs to know the capture resolution. Returns 503 if `--detect`
   wasn't passed. This is what the viewer page's overlay toggle subscribes
   to - see "Person detection" below.
+- `/events` - `text/event-stream` (SSE) of motion events. On connect, sends
+  one `snapshot` event with recent history, then a `motion` event per
+  `motion_started`/`motion_stopped` transition as it happens. Returns 503
+  under the same condition as `/detections` - see "Motion events" below.
+- `/events.json` - the same recent-history ring buffer `/events`' `snapshot`
+  sends, as a one-shot JSON document, for polling instead of holding a
+  connection open.
 
 ## Person detection (optional)
 
@@ -143,7 +151,9 @@ Flags:
 | `--detect-iou` | 0.45 | Non-maximum suppression IoU threshold. |
 
 Once running, open the viewer page and click the toggle in the top-left
-corner to turn the overlay on/off.
+corner to turn the overlay on/off. **`--detect` also turns on motion
+events** (see "Motion events" below) - there's no separate flag for that,
+since motion is derived from the person box detection already produces.
 
 ### Measured latency
 
@@ -181,6 +191,50 @@ crate's `bindgen`/`clang` step needs to target aarch64 too), so it's
 deliberately not part of this change - just flagging it as the option to
 reach for if the on-Pi build time stops being worth it.
 
+## Motion events
+
+`--detect` also turns on motion events - there's no `--motion` flag to
+enable separately. Rather than diffing the whole frame (which fires on
+lighting changes, curtains, a pet, or the camera getting bumped), motion is
+scored only inside the most recent person box: the frame is downsampled to
+a small grayscale grid, masked to the region the box covers, and compared
+against the previous sample. A debounced state machine turns that into
+discrete events - motion has to *sustain* before `motion_started` fires,
+and stillness has to sustain before `motion_stopped` fires - so a flickering
+score doesn't spam events.
+
+Because it needs a person box, motion is only as fresh as the last
+detection pass - at the idle rate (`--detect-idle-fps`, default 0.2/s) that
+means up to ~5s before a box is available to mask against, which is also
+why `--motion-box-ttl-ms` defaults to 10s (roughly twice that period, so a
+box survives one missed pass without motion going quiet for no reason).
+
+Events show up three ways:
+- The viewer page's **Activity panel** (bottom-left, appears whenever
+  detection is ready) - a still/moving pill plus a short recent-events list.
+- `/events` and `/events.json` - see "Endpoints" above.
+- `tracing` logs (`motion started` / `motion stopped`, at `info` level) -
+  useful for tuning thresholds without a browser open at all.
+
+Tuning flags (defaults are meant to be reasonable out of the box - most
+setups shouldn't need to touch these):
+
+| Flag | Default | |
+|---|---|---|
+| `--motion-fps` | 2.0 | Motion samples per second. |
+| `--motion-grid` | 64 | Diff grid side length (grid x grid grayscale cells). |
+| `--motion-pixel-delta` | 12 | Per-cell grayscale change (0-255) that counts as "changed". |
+| `--motion-threshold` | 0.08 | Fraction of in-box cells that must change to count as motion. |
+| `--motion-sustain-ms` | 700 | How long motion must persist before `motion_started` fires. |
+| `--motion-quiet-ms` | 4000 | How long stillness must persist before `motion_stopped` fires. |
+| `--motion-cooldown-ms` | 3000 | Minimum gap between a stop and the next start. |
+| `--motion-box-ttl-ms` | 10000 | Ignore person boxes older than this. |
+| `--motion-box-margin` | 0.10 | Dilate each box by this fraction of its own size before masking. |
+
+If motion is either too twitchy or too slow to notice real movement, watch
+the logged `score` field against `--motion-threshold` (`RUST_LOG=info`
+already shows it) before reaching for a different grid size or pixel delta.
+
 ## Deploying as a service
 
 See [`deploy.md`](deploy.md) for the full step-by-step runbook (getting the
@@ -210,7 +264,10 @@ sudo usermod -aG video pi
   frame-splitter tests (see its doc comments for why a naive "scan for
   `FF D9`" approach isn't safe), plus the detection module's letterbox
   coordinate math, NMS, YOLO output parsing, and JSON serialization tests
-  under `src/detect/`.
+  under `src/detect/`, and motion's grid-diff, debounce state-machine, and
+  event-hub tests under `src/detect/motion/` - a submodule of `detect`, not
+  a sibling of it, since motion has no meaning without the person box
+  `detect` produces (see that module's doc comment).
 - One test is `#[ignore]`d by default: `detect::model::tests::
   the_model_loads_optimizes_and_runs` actually loads an ONNX model through
   `tract` and runs inference on it, so it needs a real exported model file
@@ -228,3 +285,19 @@ sudo usermod -aG video pi
   browser tabs are watching. `src/detect/hub.rs`'s `DetectionHub` is the
   equivalent for detection results - a `watch` channel instead of a
   `broadcast` one, since only the latest detection pass ever matters.
+  `src/detect/motion/hub.rs`'s `MotionHub` goes back to `broadcast` (plus a
+  small ring buffer): unlike detections, individual motion events are
+  discrete occurrences that shouldn't be coalesced away by a later one
+  overwriting an unread earlier one.
+- `detect::motion::pump_loop` reads the current person box via
+  `DetectionHub::latest()`, a borrow-only accessor - never
+  `DetectionHub::subscribe()`, which would pin `detect::pump_loop` to its
+  active sample rate forever (see that function's doc comment).
+- `detect::spawn_all` is the single entry point `main.rs` calls: it spawns
+  the person detector and, since motion has no switch of its own, spawns
+  motion right alongside it from the `DetectionHub` that produces. Motion
+  living as a submodule of `detect` (not a top-level module next to it)
+  is also what lets the `decode_rgb`/`Throttle`/`fps_to_interval` helpers
+  `detect::motion` reuses stay private to `detect` - a private item is
+  visible to descendants of its defining module, so no `pub(crate)` is
+  needed just to share them with a submodule.

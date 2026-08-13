@@ -19,6 +19,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
 use crate::detect::hub::DetectionHub;
+use crate::detect::motion::hub::MotionHub;
 use crate::hub::FrameHub;
 
 /// Multipart boundary for the MJPEG stream. Arbitrary, but must match
@@ -31,6 +32,9 @@ const BOUNDARY: &str = "winniecamframe";
 pub struct AppState {
     pub hub: FrameHub,
     pub detect: Option<DetectionHub>,
+    /// `None` whenever `detect` is - motion has no separate switch, see
+    /// `motion`'s module doc comment.
+    pub motion: Option<MotionHub>,
     /// Counts browser tabs watching `/stream.mjpeg`, separately from
     /// `FrameHub`'s own broadcast receiver count. Those two used to be the
     /// same number, but once detection exists the detector *also* holds a
@@ -53,10 +57,16 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(hub: FrameHub, detect: Option<DetectionHub>, shutdown: CancellationToken) -> Self {
+    pub fn new(
+        hub: FrameHub,
+        detect: Option<DetectionHub>,
+        motion: Option<MotionHub>,
+        shutdown: CancellationToken,
+    ) -> Self {
         Self {
             hub,
             detect,
+            motion,
             viewers: Arc::new(AtomicUsize::new(0)),
             shutdown,
         }
@@ -78,6 +88,8 @@ pub fn router(state: AppState) -> Router {
         .route("/snapshot.jpg", get(snapshot))
         .route("/healthz", get(healthz))
         .route("/detections", get(detections))
+        .route("/events", get(events))
+        .route("/events.json", get(events_json))
         .with_state(state)
 }
 
@@ -118,10 +130,15 @@ async fn healthz(State(state): State<AppState>) -> Response {
         }
     };
 
+    let (motion_state, motion_events) = match &state.motion {
+        None => ("off".to_string(), 0),
+        Some(motion_hub) => (motion_hub.state().as_str().to_string(), motion_hub.event_count()),
+    };
+
     let body = format!(
         "{{\"uptime_secs\":{},\"frames_captured\":{},\"subscribers\":{},\
          \"seconds_since_last_frame\":{},\"detect\":\"{}\",\"detect_ms\":{},\
-         \"seconds_since_last_detection\":{}}}",
+         \"seconds_since_last_detection\":{},\"motion\":\"{}\",\"motion_events\":{}}}",
         stats.uptime.as_secs(),
         stats.frames_captured,
         state.viewers.load(Ordering::Relaxed),
@@ -129,6 +146,8 @@ async fn healthz(State(state): State<AppState>) -> Response {
         detect_state,
         detect_ms,
         detect_since,
+        motion_state,
+        motion_events,
     );
     ([(header::CONTENT_TYPE, "application/json")], body).into_response()
 }
@@ -288,5 +307,88 @@ async fn detections(State(state): State<AppState>) -> Response {
 
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response()
+}
+
+/// Mirrors [`DetectDisconnectLog`] for `/events` viewers.
+struct MotionDisconnectLog {
+    hub: MotionHub,
+}
+
+impl Drop for MotionDisconnectLog {
+    fn drop(&mut self) {
+        tracing::info!(
+            subscribers = self.hub.subscriber_count().saturating_sub(1),
+            "events viewer disconnected"
+        );
+    }
+}
+
+/// SSE stream of motion events. Modeled directly on `detections`: a fresh
+/// connection is first sent everything currently in the ring buffer (as one
+/// `snapshot` event, so a viewer sees recent history immediately instead of
+/// waiting out however long it takes for the next real event), then each
+/// new event as it's published.
+async fn events(State(state): State<AppState>) -> Response {
+    let Some(motion_hub) = state.motion.clone() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::CONTENT_TYPE, "application/json")],
+            "{\"error\":\"detection is not enabled\"}",
+        )
+            .into_response();
+    };
+
+    let mut rx = motion_hub.subscribe();
+    tracing::info!(subscribers = motion_hub.subscriber_count(), "events viewer connected");
+    let shutdown = state.shutdown.clone();
+
+    let stream = async_stream::stream! {
+        let _log_on_drop = MotionDisconnectLog { hub: motion_hub.clone() };
+
+        yield Ok::<Event, Infallible>(
+            Event::default().event("snapshot").data(motion_hub.recent_json())
+        );
+
+        loop {
+            // Racing against `shutdown` is what lets the server close this
+            // connection itself on exit - see `AppState::shutdown`'s doc
+            // comment; without it an open tab would hang shutdown exactly
+            // like an open `/stream.mjpeg` tab would.
+            tokio::select! {
+                _ = shutdown.cancelled() => break,
+                r = rx.recv() => match r {
+                    Ok(event) => {
+                        yield Ok(Event::default().event("motion").data(crate::detect::motion::hub::event_json(&event)));
+                    }
+                    Err(RecvError::Lagged(skipped)) => {
+                        tracing::debug!(skipped, "events viewer fell behind; some events were missed");
+                    }
+                    Err(RecvError::Closed) => break,
+                }
+            }
+        }
+    };
+
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response()
+}
+
+/// The motion ring buffer as a single JSON document, for polling instead of
+/// holding an SSE connection open.
+async fn events_json(State(state): State<AppState>) -> Response {
+    let Some(motion_hub) = state.motion.clone() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::CONTENT_TYPE, "application/json")],
+            "{\"error\":\"detection is not enabled\"}",
+        )
+            .into_response();
+    };
+    (
+        [(header::CONTENT_TYPE, "application/json")],
+        motion_hub.recent_json(),
+    )
         .into_response()
 }
