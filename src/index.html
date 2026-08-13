@@ -2,180 +2,361 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>winnie-cam</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta id="theme-color-meta" name="theme-color" content="#14101a">
+<title>Winnie</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2314101a'/%3E%3Cpath d='M20.6 21.8a7 7 0 1 1-4.3-13 8 8 0 0 0 4.3 13z' fill='%23f0b072'/%3E%3C/svg%3E">
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: dark;
+    --bg:          #14101a;
+    --bg-elev:     #1c1722;
+    --surface:     #221c29;
+    --surface-hi:  #2b2431;
+    --stage-bg:    #0d0a11;
+    --line:        #2f2735;
+
+    --text:        #efe6dd;
+    --text-dim:    #b3a79f;
+    --text-faint:  #7d7280;
+
+    --accent:      #f0b072;
+    --accent-hi:   #ffc98d;
+    --accent-wash: rgba(240, 176, 114, .16);
+
+    --ok:          #8fbf9f;
+    --ok-wash:     rgba(143, 191, 159, .28);
+    --warn:        #e0a86a;
+    --warn-wash:   rgba(224, 168, 106, .24);
+    --bad:         #d98b84;
+    --focus:       var(--accent);
+
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --fs-xs: .75rem; --fs-sm: .8125rem; --fs-md: .9375rem; --fs-lg: 1.0625rem; --fs-xl: 1.25rem;
+    --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+    --r-sm: 10px; --r-md: 14px; --r-lg: 20px; --r-full: 999px;
+    --shadow-card: 0 1px 2px rgba(0,0,0,.55), 0 16px 40px -12px rgba(0,0,0,.7);
+    --dim: 1;
+  }
+
+  /* Manual override wins in both directions; system preference only applies
+     when no override is set (:not([data-theme="dark"]) lets the dark
+     override fall through to :root's own dark tokens above). */
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg:#f6f1ea; --bg-elev:#fffaf4; --surface:#efe7dc; --surface-hi:#e6dcd0;
+    --stage-bg:#1a1520; --line:#ddd2c4;
+    --text:#2a2229; --text-dim:#5f5560; --text-faint:#8a7f88;
+    --accent:#b06d2a; --accent-hi:#8f551d; --accent-wash:rgba(176,109,42,.14);
+    --ok:#4a7c5c; --ok-wash:rgba(74,124,92,.20);
+    --warn:#a06a1f; --warn-wash:rgba(160,106,31,.18); --bad:#a4453d;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      color-scheme: light;
+      --bg:#f6f1ea; --bg-elev:#fffaf4; --surface:#efe7dc; --surface-hi:#e6dcd0;
+      --stage-bg:#1a1520; --line:#ddd2c4;
+      --text:#2a2229; --text-dim:#5f5560; --text-faint:#8a7f88;
+      --accent:#b06d2a; --accent-hi:#8f551d; --accent-wash:rgba(176,109,42,.14);
+      --ok:#4a7c5c; --ok-wash:rgba(74,124,92,.20);
+      --warn:#a06a1f; --warn-wash:rgba(160,106,31,.18); --bad:#a4453d;
+    }
+  }
+
   * { box-sizing: border-box; }
-  html, body {
-    height: 100%;
-    margin: 0;
-    background: #000;
-    overflow: hidden;
-  }
+
+  /* The UA's default `[hidden]{display:none}` rule loses to ANY author
+     `display` declaration (e.g. .btn's `display:inline-flex`), so without
+     !important here, elements toggled via the `hidden` DOM property would
+     stay visible whenever a more specific rule also sets `display`. */
+  [hidden] { display: none !important; }
+
+  html, body { margin: 0; }
   body {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    min-height: 100dvh;
+    background: var(--bg);
+    color: var(--text);
+    font: var(--fs-md) / 1.45 var(--font);
+    display: grid;
+    place-items: center;
+    padding: max(var(--sp-4), env(safe-area-inset-top)) var(--sp-4)
+             max(var(--sp-4), env(safe-area-inset-bottom));
   }
-  #feed {
-    max-width: 100vw;
-    max-height: 100vh;
-    width: auto;
-    height: auto;
-    object-fit: contain;
-    background: #000;
+
+  .app {
+    width: 100%;
+    max-width: 720px;
+    display: grid;
+    gap: var(--sp-3);
+    --chrome-h: 210px;
+    filter: brightness(var(--dim, 1));
+    transition: filter .25s ease;
   }
-  /* Positioned above #feed by DOM order (both non-static-vs-fixed still
-     paint in source order among elements of the same stacking context), so
-     no z-index bookkeeping is needed anywhere on this page. */
-  #overlay {
-    position: fixed;
-    pointer-events: none;
+
+  .bar { display: flex; align-items: center; justify-content: space-between; padding: 0 2px; }
+  .brand { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-lg); font-weight: 600; letter-spacing: -.01em; }
+  .brand .mark { color: var(--accent); }
+
+  .status {
+    margin: 0; display: inline-flex; align-items: center; gap: var(--sp-2);
+    padding: 6px 12px; border-radius: var(--r-full);
+    background: var(--surface); color: var(--text-dim);
+    font-size: var(--fs-sm); line-height: 1.4;
+    transition: opacity .3s ease, background .2s ease, color .2s ease;
+  }
+  .status.is-live { opacity: .65; }
+
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%; flex: none;
+    background: var(--text-faint);
+    transition: background .2s ease, box-shadow .2s ease;
+  }
+  #status.is-live .dot { background: var(--ok); box-shadow: 0 0 0 4px var(--ok-wash); }
+  #status.is-wait .dot { background: var(--warn); animation: pulse 1.6s ease-in-out infinite; }
+  #status.is-bad  .dot { background: var(--bad); }
+  .btn.on .dot { background: var(--ok); box-shadow: 0 0 0 4px var(--ok-wash); }
+
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+
+  /* No transform/scale/zoom may be applied to .stage or anything between it
+     and #feed: getBoundingClientRect() reports post-transform pixels while
+     an absolutely-positioned child's left/top are pre-transform local
+     pixels, so a transform anywhere in this chain would silently desync the
+     detection overlay from the video. Animate opacity instead of scale for
+     any entry transition here. */
+  .stage {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    aspect-ratio: var(--ar, 16 / 9);
+    width: min(100%, calc((100dvh - var(--chrome-h)) * var(--ar-num, 1.7778)));
+    margin-inline: auto;
+    border-radius: var(--r-lg);
+    background: var(--stage-bg);
+    box-shadow: var(--shadow-card), inset 0 0 0 1px var(--line);
+  }
+  .stage:fullscreen, .stage:-webkit-full-screen, body.immersive .stage {
+    width: 100vw; height: 100dvh; max-width: none; aspect-ratio: auto;
+    border-radius: 0; box-shadow: none; background: #000;
+    filter: brightness(var(--dim, 1)); /* top-layer fullscreen doesn't inherit .app's filter */
+  }
+  body.immersive .stage { position: fixed; inset: 0; z-index: 100; }
+  body.immersive .bar, body.immersive .controls, body.immersive .stats, body.immersive .motion-panel {
     display: none;
   }
-  #status {
-    position: fixed;
-    top: 12px;
-    right: 12px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
-    border-radius: 999px;
-    background: rgba(0, 0, 0, 0.55);
-    color: #eee;
-    font: 13px/1.4 system-ui, sans-serif;
-    backdrop-filter: blur(4px);
-    transition: opacity 0.3s ease;
+
+  #feed { display: block; width: 100%; height: 100%; object-fit: contain; background: var(--stage-bg); }
+  #overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
+
+  .placeholder {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: var(--sp-2); text-align: center; padding: var(--sp-5);
+    color: var(--text-dim);
   }
-  #status.ok { opacity: 0.35; }
-  #dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #e33;
-    transition: background 0.2s ease;
+  .placeholder svg { color: var(--text-faint); margin-bottom: var(--sp-2); }
+  .ph-title { margin: 0; font-size: var(--fs-lg); color: var(--text); font-weight: 600; }
+  .ph-sub { margin: 0; font-size: var(--fs-sm); color: var(--text-dim); max-width: 32ch; }
+
+  .stage-btn {
+    position: absolute; top: var(--sp-3); right: var(--sp-3);
+    display: grid; place-items: center; width: 40px; height: 40px;
+    border: 0; border-radius: var(--r-full);
+    background: rgba(10, 8, 13, .55); color: #efe6dd;
+    backdrop-filter: blur(4px); cursor: pointer; -webkit-tap-highlight-color: transparent;
   }
-  #status.ok #dot { background: #2ecc71; }
-  /* Same recipe as #status, mirrored to the opposite corner. */
-  #detect-toggle {
-    position: fixed;
-    top: 12px;
-    left: 12px;
-    display: none;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
-    border: 0;
-    border-radius: 999px;
-    background: rgba(0, 0, 0, 0.55);
-    color: #eee;
-    font: 13px/1.4 system-ui, sans-serif;
-    backdrop-filter: blur(4px);
-    cursor: pointer;
+
+  .controls { display: flex; gap: var(--sp-2); }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
+    min-height: 44px; padding: 0 var(--sp-4); border: 0; border-radius: var(--r-md);
+    background: var(--surface); color: var(--text); font: inherit; font-size: var(--fs-sm); font-weight: 600;
+    text-decoration: none; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    transition: background .15s ease, color .15s ease, opacity .15s ease;
+  }
+  .btn:hover { background: var(--surface-hi); }
+  .btn.on { background: var(--accent-wash); color: var(--accent-hi); }
+  .btn-wide { flex: 1 1 0; }
+  .btn-icon { flex: 0 0 44px; padding: 0; }
+  .btn[aria-disabled="true"] { opacity: .4; pointer-events: none; }
+  .btn[aria-pressed="true"] { background: var(--accent-wash); color: var(--accent-hi); }
+
+  .stats {
+    display: flex; align-items: center; flex-wrap: wrap;
+    padding: 0 2px; font-size: var(--fs-xs); color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat + .stat::before { content: '\00b7'; color: var(--text-faint); margin: 0 var(--sp-2); }
+  .ghost {
+    margin-left: auto; border: 0; background: transparent; color: var(--text-faint); cursor: pointer;
+    display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r-full);
     -webkit-tap-highlight-color: transparent;
-    transition: opacity 0.3s ease;
   }
-  #detect-toggle.on { opacity: 0.35; }
-  #detect-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #555;
-    transition: background 0.2s ease;
+  .ghost:hover { color: var(--text-dim); background: var(--surface); }
+
+  /* Motion rides the same footer stat row as presence, but as a button: it
+     expands/collapses .motion-panel below. Amber, not red/green - "moving"
+     isn't an error state the way a lost stream is, so it shouldn't borrow
+     #status's red/green vocabulary (kept from the original activity panel's
+     design intent). */
+  .motion-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 0; background: transparent; padding: 0; margin: 0;
+    color: inherit; font: inherit; font-size: var(--fs-xs); cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
   }
-  #detect-toggle.on #detect-dot { background: #2ecc71; }
-  /* Bottom-left, informational only - unlike #detect-toggle this isn't a
-     button; it's just visible whenever motion events are available (i.e.
-     whenever --detect is on - motion has no separate switch). */
-  #activity {
-    position: fixed;
-    bottom: 12px;
-    left: 12px;
-    display: none;
-    flex-direction: column;
-    gap: 6px;
-    padding: 8px 12px;
-    max-width: 220px;
-    border-radius: 12px;
-    background: rgba(0, 0, 0, 0.55);
-    color: #eee;
-    font: 12px/1.4 system-ui, sans-serif;
-    backdrop-filter: blur(4px);
+  .motion-btn .dot { background: var(--text-faint); }
+  .motion-btn.active { color: var(--warn); }
+  .motion-btn.active .dot {
+    background: var(--warn);
+    box-shadow: 0 0 0 4px var(--warn-wash);
+    animation: pulse 1.6s ease-in-out infinite;
   }
-  #activity-pill {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.02em;
+
+  .motion-panel {
+    background: var(--surface);
+    border-radius: var(--r-md);
+    padding: var(--sp-3) var(--sp-4);
+    box-shadow: var(--shadow-card);
   }
-  #activity-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #555;
-    transition: background 0.2s ease;
+  .motion-panel-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: var(--sp-2);
   }
-  /* Amber, not red/green: "moving" isn't an error state the way a lost
-     stream is, so it shouldn't borrow #status's red/green vocabulary. */
-  #activity.moving #activity-dot { background: #e8a33d; }
-  #activity-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    max-height: 110px;
-    overflow-y: auto;
+  .motion-panel-title {
+    margin: 0; font-size: var(--fs-xs); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint);
   }
-  #activity-list li {
-    opacity: 0.85;
-    white-space: nowrap;
+  .motion-total { font-size: var(--fs-xs); color: var(--text-faint); font-variant-numeric: tabular-nums; }
+  #motion-list {
+    list-style: none; margin: 0; padding: 0;
+    display: flex; flex-direction: column; gap: var(--sp-1);
+    max-height: 160px; overflow-y: auto;
+    font-size: var(--fs-sm); color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
   }
-  #activity-list li#activity-empty {
-    opacity: 0.55;
-    font-style: italic;
-  }
-  #placeholder {
-    position: fixed;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #888;
-    font: 16px system-ui, sans-serif;
-    text-align: center;
-    padding: 24px;
+  #motion-list li.motion-empty { color: var(--text-faint); font-style: italic; }
+
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  :focus:not(:focus-visible) { outline: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
+      animation-duration: .01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important;
+    }
   }
 </style>
 </head>
 <body>
-  <div id="placeholder">Connecting to camera&hellip;</div>
-  <img id="feed" alt="" style="display:none">
-  <canvas id="overlay"></canvas>
-  <div id="status"><span id="dot"></span><span id="label">connecting</span></div>
-  <button id="detect-toggle" type="button"><span id="detect-dot"></span><span id="detect-label">detect</span></button>
-  <div id="activity">
-    <div id="activity-pill"><span id="activity-dot"></span><span id="activity-label">still</span></div>
-    <ul id="activity-list"><li id="activity-empty">no motion yet</li></ul>
+  <div class="app">
+    <header class="bar">
+      <div class="brand">
+        <svg class="mark" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M15.5 12.5A6 6 0 1 1 11.5 4a4.7 4.7 0 0 0 4 8.5z"/>
+        </svg>
+        <span>Winnie</span>
+      </div>
+      <p id="status" class="status" role="status" aria-live="polite">
+        <span id="dot" class="dot"></span><span id="label">Connecting&hellip;</span>
+      </p>
+    </header>
+
+    <div id="stage" class="stage">
+      <img id="feed" alt="Live view of Winnie's room" hidden>
+      <canvas id="overlay" aria-hidden="true" hidden></canvas>
+      <div id="placeholder" class="placeholder">
+        <svg width="56" height="56" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+          <path d="M40 34A14 14 0 1 1 28 12a11 11 0 0 0 12 22z" opacity=".8"/>
+          <path d="M14 46a24 24 0 0 1 36 0" opacity=".35"/>
+        </svg>
+        <p id="ph-title" class="ph-title">Waking the camera up&hellip;</p>
+        <p id="ph-sub" class="ph-sub">This only takes a moment.</p>
+      </div>
+      <button id="exit-immersive" class="stage-btn" type="button" aria-label="Exit fullscreen" hidden>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+
+    <div class="controls">
+      <button id="detect-toggle" class="btn btn-wide" type="button" aria-pressed="false" title="Also enables motion alerts" hidden>
+        <span id="detect-dot" class="dot"></span><span id="detect-label">Detect</span>
+      </button>
+      <a id="snap" class="btn btn-wide" href="/snapshot.jpg" download="winnie.jpg" aria-disabled="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 8h3l2-2h6l2 2h3v11H4z"/><circle cx="12" cy="13" r="3.2"/>
+        </svg>
+        <span>Snapshot</span>
+      </a>
+      <button id="dim" class="btn btn-icon" type="button" aria-pressed="false" aria-label="Dim screen">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>
+        </svg>
+      </button>
+      <button id="full" class="btn btn-icon" type="button" aria-pressed="false" aria-label="Fullscreen">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>
+        </svg>
+      </button>
+    </div>
+
+    <footer class="stats">
+      <span id="stat-since" class="stat"></span>
+      <span id="stat-fps" class="stat" hidden></span>
+      <span id="stat-viewers" class="stat"></span>
+      <span id="stat-presence" class="stat" hidden></span>
+      <span id="motion-wrap" class="stat" hidden>
+        <button id="stat-motion" class="motion-btn" type="button" aria-expanded="false" aria-controls="motion-panel">
+          <span id="motion-dot" class="dot"></span><span id="motion-label">Still</span>
+        </button>
+      </span>
+      <button id="theme" class="ghost" type="button" aria-label="Switch to light theme">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>
+        </svg>
+      </button>
+    </footer>
+
+    <div id="motion-panel" class="motion-panel" role="region" aria-label="Recent motion activity" hidden>
+      <div class="motion-panel-head">
+        <p class="motion-panel-title">Recent activity</p>
+        <span id="motion-total" class="motion-total"></span>
+      </div>
+      <ul id="motion-list"><li class="motion-empty">No motion yet</li></ul>
+    </div>
   </div>
 
 <script>
 (function () {
+  const stage = document.getElementById('stage');
   const img = document.getElementById('feed');
   const placeholder = document.getElementById('placeholder');
-  const status = document.getElementById('status');
+  const phTitle = document.getElementById('ph-title');
+  const phSub = document.getElementById('ph-sub');
+  const statusEl = document.getElementById('status');
   const label = document.getElementById('label');
   const canvas = document.getElementById('overlay');
   const ctx = canvas.getContext('2d');
   const toggle = document.getElementById('detect-toggle');
-  const activity = document.getElementById('activity');
-  const activityLabel = document.getElementById('activity-label');
-  const activityList = document.getElementById('activity-list');
+  const exitImmersiveBtn = document.getElementById('exit-immersive');
+  const snap = document.getElementById('snap');
+  const dimBtn = document.getElementById('dim');
+  const fullBtn = document.getElementById('full');
+  const themeBtn = document.getElementById('theme');
+  const themeColorMeta = document.getElementById('theme-color-meta');
+  const statSince = document.getElementById('stat-since');
+  const statFps = document.getElementById('stat-fps');
+  const statViewers = document.getElementById('stat-viewers');
+  const statPresence = document.getElementById('stat-presence');
+  const motionWrap = document.getElementById('motion-wrap');
+  const motionBtn = document.getElementById('stat-motion');
+  const motionLabel = document.getElementById('motion-label');
+  const motionPanel = document.getElementById('motion-panel');
+  const motionList = document.getElementById('motion-list');
+  const motionTotal = document.getElementById('motion-total');
 
   const RECONNECT_DELAY_MS = 2000;
   const HEALTH_POLL_MS = 5000;
@@ -186,10 +367,31 @@
   const DETECTION_STALE_MS = 5000;
 
   let reconnectTimer = null;
+  let hadFrames = false;
+  let zeroFramesSince = null;
 
-  function setStatus(ok, text) {
-    status.classList.toggle('ok', ok);
-    label.textContent = text;
+  const PH = {
+    waking:      { title: 'Waking the camera up…', sub: 'This only takes a moment.' },
+    lost:        { title: 'Lost the picture', sub: 'Reconnecting on its own — hang tight.' },
+    noCamera:    { title: 'No camera picture yet', sub: 'The camera may still be starting, or unplugged.' },
+    unreachable: { title: 'Can’t reach the monitor', sub: 'Check that the Pi is on and you’re on the same Wi-Fi.' },
+  };
+  function setPlaceholder(title, sub) {
+    phTitle.textContent = title;
+    phSub.textContent = sub;
+  }
+
+  const STATES = {
+    connecting:   { text: 'Connecting…',                   cls: 'is-wait' },
+    live:         { text: 'Live',                               cls: 'is-live' },
+    reconnecting: { text: 'Reconnecting…',                 cls: 'is-wait' },
+    stale:        { text: 'Feed stalled — retrying…', cls: 'is-wait' },
+    offline:      { text: 'Can’t reach the camera',        cls: 'is-bad'  },
+  };
+  function setStatus(key) {
+    const s = STATES[key] || STATES.connecting;
+    statusEl.className = 'status ' + s.cls;
+    label.textContent = s.text;
   }
 
   function connect() {
@@ -198,17 +400,25 @@
   }
 
   img.addEventListener('load', function () {
-    placeholder.style.display = 'none';
-    img.style.display = '';
-    setStatus(true, 'live');
+    placeholder.hidden = true;
+    img.hidden = false;
+    setStatus('live');
+    hadFrames = true;
+    if (img.naturalWidth && img.naturalHeight) {
+      stage.style.setProperty('--ar', img.naturalWidth + ' / ' + img.naturalHeight);
+      stage.style.setProperty('--ar-num', String(img.naturalWidth / img.naturalHeight));
+    }
     drawOverlay();
   });
 
   img.addEventListener('error', function () {
-    img.style.display = 'none';
-    placeholder.style.display = '';
-    placeholder.textContent = 'Camera feed lost – reconnecting…';
-    setStatus(false, 'reconnecting');
+    img.hidden = true;
+    placeholder.hidden = false;
+    setPlaceholder(
+      hadFrames ? PH.lost.title : PH.waking.title,
+      hadFrames ? PH.lost.sub : PH.waking.sub
+    );
+    setStatus('reconnecting');
     if (reconnectTimer === null) {
       reconnectTimer = setTimeout(function () {
         reconnectTimer = null;
@@ -226,34 +436,96 @@
     try {
       const res = await fetch('/healthz', { cache: 'no-store' });
       const data = await res.json();
-      if (data.seconds_since_last_frame !== null && data.seconds_since_last_frame > STALE_AFTER_SECS) {
-        setStatus(false, 'stale, reconnecting');
-        connect();
+      updateStats(data);
+
+      if (data.frames_captured > 0) {
+        hadFrames = true;
+        zeroFramesSince = null;
+      } else if (zeroFramesSince === null) {
+        zeroFramesSince = Date.now();
       }
+      snap.setAttribute('aria-disabled', data.frames_captured > 0 ? 'false' : 'true');
+
+      if (data.seconds_since_last_frame !== null && data.seconds_since_last_frame > STALE_AFTER_SECS) {
+        setStatus('stale');
+        setPlaceholder(
+          hadFrames ? PH.lost.title : PH.waking.title,
+          hadFrames ? PH.lost.sub : PH.waking.sub
+        );
+        img.hidden = true;
+        placeholder.hidden = false;
+        connect();
+      } else if (data.frames_captured === 0 && zeroFramesSince !== null && Date.now() - zeroFramesSince > 15000) {
+        setPlaceholder(PH.noCamera.title, PH.noCamera.sub);
+      }
+
       // Only show the toggle once the server actually has a usable model -
       // same poll that already runs every 5s, no extra request. Deliberately
       // *not* `data.detect !== 'off'`: that would also count 'loading' and
       // 'error' as available, and a model that failed to load never sends
       // a single box - the toggle would look functional but do nothing.
-      // #detect-toggle's own CSS rule sets `display: none`, so clearing
-      // the inline style (`= ''`) would just fall back to that rule and
-      // never actually show it - it has to be set to the layout value the
-      // rest of that rule assumes ('flex', for its `align-items`/`gap`).
       const available = data.detect === 'ready';
-      toggle.style.display = available ? 'flex' : 'none';
+      toggle.hidden = !available;
       if (!available && detectOpen()) stopDetect();
 
-      // Motion has no separate toggle - it's available exactly when
-      // detection is, so it rides the same `available` check.
-      activity.style.display = available ? 'flex' : 'none';
+      // Motion has no separate flag server-side - it rides along with
+      // person detection (see --detect's help text) - so it uses the same
+      // `available` gate as the toggle above rather than its own check.
+      motionWrap.hidden = !available;
       if (available) {
-        if (!document.hidden) startEvents();
+        setMotionState(data.motion === 'active');
+        motionTotal.textContent = data.motion_events > 0 ? data.motion_events + ' total' : '';
       } else {
-        stopEvents();
+        motionPanel.hidden = true;
+        motionBtn.setAttribute('aria-expanded', 'false');
       }
     } catch (e) {
-      setStatus(false, 'server unreachable');
+      setStatus('offline');
+      setPlaceholder(PH.unreachable.title, PH.unreachable.sub);
+      img.hidden = true;
+      placeholder.hidden = false;
     }
+  }
+
+  // --- Footer stats -------------------------------------------------------
+
+  let fpsPrev = null; // { frames, t }
+  function fmtFps(framesCaptured) {
+    const now = Date.now();
+    let text = '';
+    if (fpsPrev) {
+      const dt = (now - fpsPrev.t) / 1000;
+      const df = framesCaptured - fpsPrev.frames;
+      if (dt > 0 && df >= 0) text = Math.round(df / dt) + ' fps';
+    }
+    fpsPrev = { frames: framesCaptured, t: now };
+    return text;
+  }
+
+  function fmtSince(uptimeSecs) {
+    if (uptimeSecs < 60) return 'Just started';
+    if (uptimeSecs >= 86400) {
+      const d = Math.floor(uptimeSecs / 86400);
+      const h = Math.floor((uptimeSecs % 86400) / 3600);
+      return 'Watching for ' + d + 'd' + (h ? ' ' + h + 'h' : '');
+    }
+    const start = new Date(Date.now() - uptimeSecs * 1000);
+    return 'Watching since ' + start.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  function updateStats(data) {
+    statSince.textContent = fmtSince(data.uptime_secs);
+    const fps = fmtFps(data.frames_captured);
+    statFps.textContent = fps;
+    statFps.hidden = !fps;
+    const v = data.subscribers;
+    statViewers.textContent = v === 1 ? '1 viewer' : v + ' viewers';
+  }
+
+  function setPresence(dets) {
+    if (!detectOpen()) { statPresence.hidden = true; return; }
+    statPresence.hidden = false;
+    statPresence.textContent = dets ? (dets.length ? 'person detected' : 'no person detected') : 'checking…';
   }
 
   // --- Detection overlay -----------------------------------------------
@@ -271,37 +543,49 @@
     return es !== null;
   }
 
-  /// Where the *painted* image actually sits, in viewport pixels. #feed is
-  /// `max-width:100vw; max-height:100vh; width:auto; height:auto;
-  /// object-fit:contain` inside a flex-centered body - with width/height
-  /// auto the element box is already aspect-fitted today, but this is
-  /// written in the general object-fit:contain form anyway so it keeps
-  /// working if that CSS ever changes to e.g. width:100%.
+  let paintTokens = null;
+  function readPaintTokens() {
+    const cs = getComputedStyle(document.documentElement);
+    paintTokens = {
+      ok: cs.getPropertyValue('--ok').trim() || '#8fbf9f',
+      text: cs.getPropertyValue('--text').trim() || '#efe6dd',
+    };
+  }
+
+  /// Painted-image rect in coordinates local to #stage - assignable straight
+  /// to an absolutely-positioned child's left/top. Both source rects come
+  /// from getBoundingClientRect (viewport space), so their difference is
+  /// scroll-independent; that's what lets the page scroll instead of forcing
+  /// `overflow:hidden` on body. clientLeft/clientTop subtract any stage
+  /// border, because an abspos child is placed against the *padding* box
+  /// while getBoundingClientRect reports the *border* box.
+  ///
+  /// The object-fit:contain term is NOT vestigial: normal layout matches the
+  /// stage's aspect-ratio to the frame's so it evaluates to zero, but
+  /// fullscreen/immersive give the stage the screen's ratio and this is the
+  /// only thing that keeps boxes aligned there.
   function imageRect() {
-    const r = img.getBoundingClientRect();
     const nw = img.naturalWidth, nh = img.naturalHeight;
-    // naturalWidth/height are 0 while a reconnect is in flight, and the
-    // element box can be zero-sized before the very first frame paints.
-    if (!nw || !nh || !r.width || !r.height) return null;
+    if (!nw || !nh) return null;
+    const r = img.getBoundingClientRect();
+    const sr = stage.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
     const s = Math.min(r.width / nw, r.height / nh);
     const dw = nw * s, dh = nh * s;
     return {
-      left: r.left + (r.width - dw) / 2,
-      top: r.top + (r.height - dh) / 2,
+      left: (r.left - sr.left - stage.clientLeft) + (r.width - dw) / 2,
+      top: (r.top - sr.top - stage.clientTop) + (r.height - dh) / 2,
       width: dw,
       height: dh,
     };
   }
 
   /// Positions/sizes the canvas over the rendered image and returns that
-  /// rect, or null (and hides the canvas) if there's nothing to draw over
-  /// yet. `body { overflow: hidden }` means viewport coordinates from
-  /// getBoundingClientRect() are usable directly with position:fixed - no
-  /// scroll offset to account for.
+  /// rect, or null (and hides the canvas) if there's nothing to draw over yet.
   function syncCanvas() {
     const rect = imageRect();
     if (!rect) {
-      canvas.style.display = 'none';
+      canvas.hidden = true;
       return null;
     }
     const dpr = window.devicePixelRatio || 1;
@@ -317,24 +601,23 @@
       canvas.height = bh;
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS pixels from here on
-    // Same trap as the detect-toggle button: #overlay's own CSS rule sets
-    // `display: none`, so clearing the inline style (`= ''`) falls straight
-    // back to that rule and the canvas stays invisible - has to be set to
-    // an actual displayed value.
-    canvas.style.display = 'block';
+    canvas.hidden = false;
     return rect;
   }
 
   function drawOverlay() {
     const rect = syncCanvas();
+    setPresence(lastPayload && lastPayload.dets);
     if (!rect) return;
     ctx.clearRect(0, 0, rect.width, rect.height);
     if (!lastPayload || !lastPayload.dets) return;
+    if (!paintTokens) readPaintTokens();
 
     ctx.lineWidth = 2;
-    ctx.strokeStyle = '#2ecc71'; // same green as #status.ok #dot
+    ctx.strokeStyle = paintTokens.ok;
     ctx.font = '12px system-ui, sans-serif';
     ctx.textBaseline = 'top';
+    const hasRound = typeof ctx.roundRect === 'function';
 
     for (const d of lastPayload.dets) {
       // Normalized 0..1 of the source frame -> rendered pixels. This is
@@ -342,17 +625,113 @@
       // capture resolution.
       const x = d.x * rect.width, y = d.y * rect.height;
       const w = d.w * rect.width, h = d.h * rect.height;
-      ctx.strokeRect(x, y, w, h);
+      ctx.beginPath();
+      if (hasRound) ctx.roundRect(x, y, w, h, 6); else ctx.rect(x, y, w, h);
+      ctx.stroke();
 
       const text = d.label + ' ' + Math.round(d.score * 100) + '%';
       const textWidth = ctx.measureText(text).width;
-      const ty = Math.max(0, y - 16);
+      const ty = Math.max(0, y - 18);
       ctx.fillStyle = 'rgba(0,0,0,0.55)';
-      ctx.fillRect(x, ty, textWidth + 8, 16);
-      ctx.fillStyle = '#eee';
+      ctx.beginPath();
+      if (hasRound) ctx.roundRect(x, ty, textWidth + 8, 16, 4); else ctx.rect(x, ty, textWidth + 8, 16);
+      ctx.fill();
+      ctx.fillStyle = paintTokens.text;
       ctx.fillText(text, x + 4, ty + 2);
     }
   }
+
+  // --- Motion (activity) --------------------------------------------------
+  //
+  // The server streams motion_started/motion_stopped events over SSE at
+  // /events, plus a `snapshot` event on connect carrying recent history from
+  // its ring buffer. This section only renders what the server decided -
+  // all the debouncing/thresholding happens server-side. Motion has no
+  // switch of its own (see --detect's help text), so its SSE connection
+  // rides the Detect toggle's lifecycle below rather than getting a second
+  // button.
+
+  const MAX_MOTION_ITEMS = 6;
+  let eventsSource = null;
+  let motionEvents = [];
+
+  function formatClockTime(unixMs) {
+    return new Date(unixMs).toLocaleTimeString([], {
+      hour: 'numeric', minute: '2-digit', second: '2-digit',
+    });
+  }
+
+  function formatMotionDuration(ms) {
+    if (ms < 1000) return ms + 'ms';
+    const s = ms / 1000;
+    return (s >= 10 ? Math.round(s) : s.toFixed(1)) + 's';
+  }
+
+  function renderMotionList() {
+    motionList.innerHTML = '';
+    if (motionEvents.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'motion-empty';
+      li.textContent = 'No motion yet';
+      motionList.appendChild(li);
+      return;
+    }
+    // Newest first, capped so the list can't grow without bound.
+    const recent = motionEvents.slice(-MAX_MOTION_ITEMS).reverse();
+    for (const e of recent) {
+      const li = document.createElement('li');
+      li.textContent = e.kind === 'started'
+        ? formatClockTime(e.at) + ' — started moving'
+        : formatClockTime(e.at) + ' — settled (' + formatMotionDuration(e.duration_ms || 0) + ')';
+      motionList.appendChild(li);
+    }
+  }
+
+  function setMotionState(active) {
+    motionBtn.classList.toggle('active', active);
+    motionLabel.textContent = active ? 'Moving' : 'Still';
+  }
+
+  function startEvents() {
+    if (eventsSource) return;
+    eventsSource = new EventSource('/events');
+    eventsSource.addEventListener('snapshot', function (e) {
+      try {
+        const data = JSON.parse(e.data);
+        motionEvents = Array.isArray(data.events) ? data.events : [];
+        renderMotionList();
+        const last = motionEvents[motionEvents.length - 1];
+        setMotionState(!!last && last.kind === 'started');
+      } catch (err) {
+        // Malformed payload - ignore this tick.
+      }
+    });
+    eventsSource.addEventListener('motion', function (e) {
+      try {
+        const ev = JSON.parse(e.data);
+        motionEvents.push(ev);
+        if (motionEvents.length > 50) motionEvents.shift();
+        renderMotionList();
+        setMotionState(ev.kind === 'started');
+      } catch (err) {
+        // Malformed payload - ignore this tick.
+      }
+    });
+    // EventSource retries connections on its own; nothing to do here.
+    eventsSource.onerror = function () {};
+  }
+
+  function stopEvents() {
+    if (eventsSource) {
+      eventsSource.close();
+      eventsSource = null;
+    }
+  }
+
+  motionBtn.addEventListener('click', function () {
+    motionPanel.hidden = !motionPanel.hidden;
+    motionBtn.setAttribute('aria-expanded', motionPanel.hidden ? 'false' : 'true');
+  });
 
   function startDetect() {
     if (es) return;
@@ -374,6 +753,9 @@
       drawOverlay();
     };
     toggle.classList.add('on');
+    toggle.setAttribute('aria-pressed', 'true');
+    setPresence(null);
+    startEvents();
     try { localStorage.setItem('winnie-detect', '1'); } catch (e) {}
   }
 
@@ -385,6 +767,8 @@
     lastPayload = null;
     drawOverlay();
     toggle.classList.remove('on');
+    toggle.setAttribute('aria-pressed', 'false');
+    stopEvents();
     try { localStorage.setItem('winnie-detect', '0'); } catch (e) {}
   }
 
@@ -392,104 +776,22 @@
     if (detectOpen()) stopDetect(); else startDetect();
   });
 
-  // --- Activity panel (motion events) -----------------------------------
-  //
-  // The server streams motion_started/motion_stopped events over SSE at
-  // /events, plus a `snapshot` event on connect carrying recent history
-  // from its ring buffer. This section only renders what the server
-  // decided - all the debouncing/thresholding happens server-side.
-
-  const MAX_ACTIVITY_ITEMS = 8;
-  let eventsSource = null;
-  let activityEvents = [];
-
-  function formatClockTime(unixMs) {
-    return new Date(unixMs).toLocaleTimeString([], {
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-    });
-  }
-
-  function formatDuration(ms) {
-    if (ms < 1000) return ms + 'ms';
-    const s = ms / 1000;
-    return (s >= 10 ? Math.round(s) : s.toFixed(1)) + 's';
-  }
-
-  function renderActivityList() {
-    activityList.innerHTML = '';
-    if (activityEvents.length === 0) {
-      const li = document.createElement('li');
-      li.id = 'activity-empty';
-      li.textContent = 'no motion yet';
-      activityList.appendChild(li);
-      return;
-    }
-    // Newest first, capped so the list can't grow without bound.
-    const recent = activityEvents.slice(-MAX_ACTIVITY_ITEMS).reverse();
-    for (const e of recent) {
-      const li = document.createElement('li');
-      li.textContent = e.kind === 'started'
-        ? formatClockTime(e.at) + ' – motion started'
-        : formatClockTime(e.at) + ' – stopped (' + formatDuration(e.duration_ms || 0) + ')';
-      activityList.appendChild(li);
-    }
-  }
-
-  function setActivityState(moving) {
-    activity.classList.toggle('moving', moving);
-    activityLabel.textContent = moving ? 'moving' : 'still';
-  }
-
-  function startEvents() {
-    if (eventsSource) return;
-    eventsSource = new EventSource('/events');
-    eventsSource.addEventListener('snapshot', function (e) {
-      try {
-        const data = JSON.parse(e.data);
-        activityEvents = Array.isArray(data.events) ? data.events : [];
-        renderActivityList();
-        const last = activityEvents[activityEvents.length - 1];
-        setActivityState(!!last && last.kind === 'started');
-      } catch (err) {
-        // Malformed payload - ignore this tick.
-      }
-    });
-    eventsSource.addEventListener('motion', function (e) {
-      try {
-        const ev = JSON.parse(e.data);
-        activityEvents.push(ev);
-        if (activityEvents.length > 50) activityEvents.shift();
-        renderActivityList();
-        setActivityState(ev.kind === 'started');
-      } catch (err) {
-        // Malformed payload - ignore this tick.
-      }
-    });
-    // EventSource retries connections on its own; nothing to do here.
-    eventsSource.onerror = function () {};
-  }
-
-  function stopEvents() {
-    if (eventsSource) {
-      eventsSource.close();
-      eventsSource = null;
-    }
-  }
-
   window.addEventListener('resize', drawOverlay);
   if (window.ResizeObserver) {
-    new ResizeObserver(drawOverlay).observe(img); // catches orientation change
+    new ResizeObserver(drawOverlay).observe(stage); // catches orientation change
   }
+  document.addEventListener('fullscreenchange', function () { syncFullBtn(); drawOverlay(); });
+  document.addEventListener('webkitfullscreenchange', function () { syncFullBtn(); drawOverlay(); });
 
   // A backgrounded tab has no business keeping the Pi busy running
-  // inference for a phone screen nobody's looking at.
+  // inference for a phone screen nobody's looking at, or holding open an
+  // events connection nobody can see either.
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) {
       if (es) { es.close(); es = null; }
       stopEvents();
-    } else {
-      if (toggle.classList.contains('on')) startDetect();
-      if (activity.style.display !== 'none') startEvents();
+    } else if (toggle.classList.contains('on')) {
+      startDetect();
     }
   });
 
@@ -502,6 +804,128 @@
     }
   }, 1000);
 
+  // --- Fullscreen / immersive fallback ------------------------------------
+  // iPhone Safari implements no Element.requestFullscreen at all, so the
+  // CSS `.immersive` fallback is the primary path on the primary device,
+  // not a rare edge case.
+
+  function syncFullBtn() {
+    const active = !!(document.fullscreenElement || document.webkitFullscreenElement) ||
+      document.body.classList.contains('immersive');
+    fullBtn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    exitImmersiveBtn.hidden = !active;
+  }
+
+  function toggleImmersive() {
+    const fsEl = document.fullscreenElement || document.webkitFullscreenElement;
+    if (fsEl) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      return;
+    }
+    if (document.body.classList.contains('immersive')) {
+      document.body.classList.remove('immersive');
+      syncFullBtn();
+      drawOverlay();
+      return;
+    }
+    if (stage.requestFullscreen) {
+      stage.requestFullscreen().catch(function () {
+        document.body.classList.add('immersive');
+        syncFullBtn();
+        drawOverlay();
+      });
+    } else if (stage.webkitRequestFullscreen) {
+      stage.webkitRequestFullscreen();
+    } else {
+      document.body.classList.add('immersive');
+      syncFullBtn();
+      drawOverlay();
+    }
+  }
+  fullBtn.addEventListener('click', toggleImmersive);
+  exitImmersiveBtn.addEventListener('click', toggleImmersive);
+
+  // --- Dim / night mode ----------------------------------------------------
+
+  const DIM_LEVELS = [1, 0.6, 0.35];
+  const DIM_LABELS = ['Dim screen', 'Dim: low', 'Dim: lowest'];
+  let dimIdx = 0;
+  function applyDim() {
+    document.documentElement.style.setProperty('--dim', DIM_LEVELS[dimIdx]);
+    dimBtn.setAttribute('aria-pressed', dimIdx !== 0 ? 'true' : 'false');
+    dimBtn.setAttribute('aria-label', DIM_LABELS[dimIdx]);
+    dimBtn.classList.toggle('on', dimIdx !== 0);
+  }
+  function initDim() {
+    try {
+      const saved = parseInt(localStorage.getItem('winnie-dim') || '0', 10);
+      if (saved >= 0 && saved < DIM_LEVELS.length) dimIdx = saved;
+    } catch (e) {}
+    applyDim();
+  }
+  dimBtn.addEventListener('click', function () {
+    dimIdx = (dimIdx + 1) % DIM_LEVELS.length;
+    applyDim();
+    try { localStorage.setItem('winnie-dim', String(dimIdx)); } catch (e) {}
+  });
+
+  // --- Theme -----------------------------------------------------------
+
+  function resolvedIsLight() {
+    const attr = document.documentElement.getAttribute('data-theme');
+    if (attr) return attr === 'light';
+    try { return matchMedia('(prefers-color-scheme: light)').matches; } catch (e) { return false; }
+  }
+  function syncThemeColor() {
+    themeColorMeta.setAttribute('content', resolvedIsLight() ? '#f6f1ea' : '#14101a');
+    themeBtn.setAttribute('aria-label', resolvedIsLight() ? 'Switch to dark theme' : 'Switch to light theme');
+  }
+  function setTheme(mode) {
+    if (mode) document.documentElement.setAttribute('data-theme', mode);
+    else document.documentElement.removeAttribute('data-theme');
+    try {
+      if (mode) localStorage.setItem('winnie-theme', mode);
+      else localStorage.removeItem('winnie-theme');
+    } catch (e) {}
+    syncThemeColor();
+    readPaintTokens();
+    drawOverlay();
+  }
+  function initTheme() {
+    let saved = null;
+    try { saved = localStorage.getItem('winnie-theme'); } catch (e) {}
+    if (saved === 'light' || saved === 'dark') document.documentElement.setAttribute('data-theme', saved);
+    syncThemeColor();
+    try {
+      matchMedia('(prefers-color-scheme: light)').addEventListener('change', function () {
+        if (!document.documentElement.getAttribute('data-theme')) {
+          syncThemeColor();
+          readPaintTokens();
+          drawOverlay();
+        }
+      });
+    } catch (e) {}
+  }
+  themeBtn.addEventListener('click', function () {
+    setTheme(resolvedIsLight() ? 'dark' : 'light');
+  });
+
+  // --- Snapshot ----------------------------------------------------------
+
+  function tsSlug() {
+    const d = new Date();
+    const pad = function (n) { return String(n).padStart(2, '0'); };
+    return d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '-' +
+      pad(d.getHours()) + pad(d.getMinutes()) + pad(d.getSeconds());
+  }
+  snap.addEventListener('click', function (e) {
+    if (snap.getAttribute('aria-disabled') === 'true') { e.preventDefault(); return; }
+    snap.href = '/snapshot.jpg?ts=' + Date.now();
+    snap.download = 'winnie-' + tsSlug() + '.jpg';
+  });
+
+  // --- Bootstrap -----------------------------------------------------------
+
   connect();
   setInterval(pollHealth, HEALTH_POLL_MS);
   pollHealth(); // don't wait 5s for the toggle to first appear
@@ -509,6 +933,30 @@
   let restoredOpen = false;
   try { restoredOpen = localStorage.getItem('winnie-detect') === '1'; } catch (e) {}
   if (restoredOpen) startDetect();
+
+  initTheme();
+  initDim();
+  readPaintTokens();
+  syncFullBtn();
+
+  if (location.search.includes('debug')) {
+    window.__winnie = {
+      setStatus: setStatus,
+      setPlaceholder: setPlaceholder,
+      updateStats: updateStats,
+      fake: function (dets) {
+        lastPayload = { w: 1, h: 1, seq: 0, ms: 0, dets: dets };
+        lastPayloadAt = Date.now();
+        drawOverlay();
+      },
+      fakeMotion: function (kind, extra) {
+        const ev = Object.assign({ seq: 0, kind: kind, at: Date.now() }, extra || {});
+        motionEvents.push(ev);
+        renderMotionList();
+        setMotionState(kind === 'started');
+      },
+    };
+  }
 })();
 </script>
 </body>
