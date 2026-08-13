@@ -19,8 +19,8 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
 use crate::detect::hub::DetectionHub;
+use crate::detect::motion::hub::MotionHub;
 use crate::hub::FrameHub;
-use crate::motion::hub::MotionHub;
 
 /// Multipart boundary for the MJPEG stream. Arbitrary, but must match
 /// between the `Content-Type` header and each part's leading marker line.
@@ -359,7 +359,7 @@ async fn events(State(state): State<AppState>) -> Response {
                 _ = shutdown.cancelled() => break,
                 r = rx.recv() => match r {
                     Ok(event) => {
-                        yield Ok(Event::default().event("motion").data(crate::motion::hub::event_json(&event)));
+                        yield Ok(Event::default().event("motion").data(crate::detect::motion::hub::event_json(&event)));
                     }
                     Err(RecvError::Lagged(skipped)) => {
                         tracing::debug!(skipped, "events viewer fell behind; some events were missed");

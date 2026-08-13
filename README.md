@@ -264,8 +264,10 @@ sudo usermod -aG video pi
   frame-splitter tests (see its doc comments for why a naive "scan for
   `FF D9`" approach isn't safe), plus the detection module's letterbox
   coordinate math, NMS, YOLO output parsing, and JSON serialization tests
-  under `src/detect/`, and the motion module's grid-diff, debounce
-  state-machine, and event-hub tests under `src/motion/`.
+  under `src/detect/`, and motion's grid-diff, debounce state-machine, and
+  event-hub tests under `src/detect/motion/` - a submodule of `detect`, not
+  a sibling of it, since motion has no meaning without the person box
+  `detect` produces (see that module's doc comment).
 - One test is `#[ignore]`d by default: `detect::model::tests::
   the_model_loads_optimizes_and_runs` actually loads an ONNX model through
   `tract` and runs inference on it, so it needs a real exported model file
@@ -283,11 +285,19 @@ sudo usermod -aG video pi
   browser tabs are watching. `src/detect/hub.rs`'s `DetectionHub` is the
   equivalent for detection results - a `watch` channel instead of a
   `broadcast` one, since only the latest detection pass ever matters.
-  `src/motion/hub.rs`'s `MotionHub` goes back to `broadcast` (plus a small
-  ring buffer): unlike detections, individual motion events are discrete
-  occurrences that shouldn't be coalesced away by a later one overwriting
-  an unread earlier one.
-- `motion::pump_loop` reads the current person box via
+  `src/detect/motion/hub.rs`'s `MotionHub` goes back to `broadcast` (plus a
+  small ring buffer): unlike detections, individual motion events are
+  discrete occurrences that shouldn't be coalesced away by a later one
+  overwriting an unread earlier one.
+- `detect::motion::pump_loop` reads the current person box via
   `DetectionHub::latest()`, a borrow-only accessor - never
   `DetectionHub::subscribe()`, which would pin `detect::pump_loop` to its
   active sample rate forever (see that function's doc comment).
+- `detect::spawn_all` is the single entry point `main.rs` calls: it spawns
+  the person detector and, since motion has no switch of its own, spawns
+  motion right alongside it from the `DetectionHub` that produces. Motion
+  living as a submodule of `detect` (not a top-level module next to it)
+  is also what lets the `decode_rgb`/`Throttle`/`fps_to_interval` helpers
+  `detect::motion` reuses stay private to `detect` - a private item is
+  visible to descendants of its defining module, so no `pub(crate)` is
+  needed just to share them with a submodule.

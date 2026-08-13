@@ -4,12 +4,18 @@
 //! `motion_stopped` events (`motion::detector::MotionDetector`) and fanned
 //! out over `/events` (`motion::hub::MotionHub`).
 //!
+//! A submodule of `detect`, not a sibling of it: motion has no meaning
+//! without a person box to mask against, so it belongs under the module
+//! that produces one, not next to it. That nesting is also why the
+//! `decode_rgb`/`Throttle`/`fps_to_interval` helpers this module reuses
+//! (see `pump_loop`/`worker_loop` below) can stay private in `detect`'s
+//! top level instead of needing `pub(crate)` - a private item is visible
+//! to descendants of its defining module, and this module is one.
+//!
 //! There is no separate `--motion` flag - motion runs whenever `--detect`
-//! does (see `MotionConfig::from_config`). It needs a person box to mask
-//! against, so a motion-without-detection mode would only ever be a way to
-//! misconfigure the monitor; `main.rs` spawns this module from the very
-//! `DetectionHub` that spawning the detector just produced, so the two
-//! literally cannot come apart at runtime.
+//! does (see `MotionConfig::from_config`). `detect::spawn_all` spawns this
+//! module from the very `DetectionHub` that spawning the detector just
+//! produced, so the two literally cannot come apart at runtime.
 //!
 //! # Never subscribing to `DetectionHub`
 //!
@@ -41,12 +47,15 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::Config;
-use crate::detect::hub::DetectionHub;
-use crate::detect::nms::BBox;
-use crate::detect::{decode_rgb, Throttle, fps_to_interval};
 use crate::hub::FrameHub;
 use detector::{DebounceConfig, MotionDetector, MotionKind};
 use hub::MotionHub;
+// These three are private in `super` (`detect`) - reachable as `super::X`
+// only because this module is nested inside it. See this module's doc
+// comment for why that's deliberate, not a shortcut.
+use super::hub::DetectionHub;
+use super::nms::BBox;
+use super::{Throttle, decode_rgb, fps_to_interval};
 
 /// Motion settings extracted from [`Config`]. Like `detect::DetectConfig`,
 /// kept separate from `Config` itself, which doesn't survive past startup.
@@ -64,13 +73,13 @@ pub struct MotionConfig {
 }
 
 impl MotionConfig {
-    /// `None` whenever detection is off - motion has no separate switch,
-    /// see this module's doc comment.
-    pub fn from_config(cfg: &Config) -> Option<Self> {
-        if !cfg.detect {
-            return None;
-        }
-        Some(Self {
+    /// Unconditional: unlike `DetectConfig::from_config`, there's no
+    /// "motion disabled" case to report here. `detect::spawn_all` is the
+    /// only caller, and it only reaches this after already confirming
+    /// `--detect` is on - motion has no separate switch, see this module's
+    /// doc comment.
+    pub fn from_config(cfg: &Config) -> Self {
+        Self {
             fps: cfg.motion_fps,
             grid_side: cfg.motion_grid,
             pixel_delta: cfg.motion_pixel_delta,
@@ -80,7 +89,7 @@ impl MotionConfig {
             cooldown_ms: cfg.motion_cooldown_ms,
             box_ttl_ms: cfg.motion_box_ttl_ms,
             box_margin: cfg.motion_box_margin,
-        })
+        }
     }
 
     fn debounce(&self) -> DebounceConfig {
@@ -126,10 +135,10 @@ impl MotionHandle {
     }
 }
 
-/// Spawns the motion pump task and worker thread. `det_hub` is the same
-/// `DetectionHub` `detect::spawn` just returned - see this module's doc
-/// comment on why that pairing is enforced at the call site rather than
-/// checked here.
+/// Spawns the motion pump task and worker thread. Called from
+/// `detect::spawn_all` with the same `DetectionHub` its own call to
+/// `detect::spawn` just returned - see this module's doc comment on why
+/// that pairing is enforced at the call site rather than checked here.
 pub fn spawn(
     cfg: MotionConfig,
     frame_hub: FrameHub,

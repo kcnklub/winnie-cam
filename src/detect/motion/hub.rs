@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::broadcast;
 
 use crate::json::frac;
-use crate::motion::detector::MotionKind;
+use super::detector::MotionKind;
 
 /// How many past events `/events.json` and a freshly-connected `/events`
 /// client can see. Generous enough to cover "what happened while I wasn't
