@@ -16,6 +16,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
 v4l = "0.14"
+tract-onnx = "0.22"
+zune-jpeg = "0.5"
 
 [[bin]]
 name = "winnie-cam"

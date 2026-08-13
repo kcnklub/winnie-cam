@@ -1,5 +1,6 @@
 mod capture;
 mod config;
+mod detect;
 mod hub;
 mod jpeg;
 mod web;
@@ -21,6 +22,10 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = Config::parse();
+    // Extracted before `cfg` goes out of scope at the end of this block -
+    // `Config` itself isn't stored anywhere past startup (see config.rs).
+    let detect_cfg = detect::DetectConfig::from_config(&cfg)?;
+
     let hub = FrameHub::new();
     let shutdown = CancellationToken::new();
 
@@ -35,12 +40,22 @@ async fn main() -> anyhow::Result<()> {
     let source = capture::build(&cfg)?;
     let capture_task = tokio::spawn(capture::supervise(source, hub.clone(), shutdown.clone()));
 
+    // Spawned before the listener binds: model loading happens on the
+    // detector's own worker thread, so it never delays the video stream
+    // coming up (see `detect::spawn`'s doc comment).
+    let detect_handle = detect_cfg
+        .map(|cfg| detect::spawn(cfg, hub.clone(), shutdown.clone()));
+    let (detect_hub, detect_task) = match detect_handle {
+        Some((hub, task)) => (Some(hub), Some(task)),
+        None => (None, None),
+    };
+
     let listener = tokio::net::TcpListener::bind(cfg.bind)
         .await
         .with_context(|| format!("binding to {}", cfg.bind))?;
     tracing::info!(bind = %cfg.bind, "winnie-cam listening");
 
-    let app = web::router(hub);
+    let app = web::router(web::AppState::new(hub, detect_hub, shutdown.clone()));
     let server_shutdown = shutdown.clone();
     axum::serve(listener, app)
         .with_graceful_shutdown(async move { server_shutdown.cancelled().await })
@@ -48,11 +63,15 @@ async fn main() -> anyhow::Result<()> {
         .context("http server error")?;
 
     // The server only returns after shutdown was triggered; make sure
-    // capture winds down too (it may already be stopping on its own).
+    // capture (and detection, if enabled) wind down too - they may already
+    // be stopping on their own.
     shutdown.cancel();
     capture_task
         .await
         .context("capture supervisor task panicked")?;
+    if let Some(task) = detect_task {
+        task.join().await.context("detection task panicked")?;
+    }
 
     Ok(())
 }

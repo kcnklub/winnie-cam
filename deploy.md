@@ -90,15 +90,32 @@ rsync -avz --delete \
 `--delete` keeps the Pi's copy in sync if you've removed files locally;
 drop it for the first run if you'd rather be conservative.
 
+If you're using `--detect` (see "Person detection" in the README), the
+model file needs to go over too - it's `.gitignore`d, so a fresh sync of
+the repo alone won't include it:
+
+```bash
+rsync -avz ./models/ "$PI_HOST":~/winnie-cam/models/
+```
+
 ## 3. Build on the Pi
 
 ```bash
 ssh "$PI_HOST" 'cd ~/winnie-cam && ~/.cargo/bin/cargo build --release'
 ```
 
-The first build compiles the full dependency tree and can take several
-minutes on a Pi Zero 2 W (faster on a Pi 4/5). Subsequent builds after small
-code changes are much quicker.
+**Without `--detect`** the first build compiles the full dependency tree and
+can take several minutes on a Pi Zero 2 W (faster on a Pi 4/5). Subsequent
+builds after small code changes are much quicker.
+
+**With detection enabled** (i.e. `tract-onnx` in `Cargo.toml`), the first
+build is much bigger - roughly **30-50 minutes on a Pi 4** and **15-25
+minutes on a Pi 5**, since `tract`'s dependency tree is large and one of its
+crates (`tract-linalg`) generates and compiles aarch64 NEON assembly at
+build time. This is a one-time cost per Pi: `rsync` above already excludes
+`target/`, so incremental rebuilds after that stay fast. See the README's
+"Person detection" section for the tradeoff we're accepting here (and the
+future option of cross-compiling from a faster machine instead).
 
 ## 4. Smoke-test it manually
 
@@ -137,6 +154,17 @@ need:
 ```ini
 ExecStart=/home/pi/winnie-cam/target/release/winnie-cam --width 1280 --height 720 --fps 15 --hflip
 ```
+
+With detection enabled, add `--detect` and `--model`:
+
+```ini
+ExecStart=/home/pi/winnie-cam/target/release/winnie-cam --width 1280 --height 720 --fps 15 --hflip \
+  --detect --model /home/pi/winnie-cam/models/yolov8n.onnx
+```
+
+No changes to the unit's hardening are needed for this: `ProtectHome=read-only`
+makes `/home` read-only, not inaccessible, so the process can still read the
+model file from there - it just can't write anywhere under it.
 
 (The `User=pi` / `Group=pi` lines in the unit need to match too, if your Pi
 user isn't literally named `pi`.)
@@ -209,3 +237,20 @@ doing it often.
 - **Permission denied opening `/dev/video0`**: the user running the service
   isn't in the `video` group yet, or hasn't re-logged-in since being added
   (see step 1). Check with `groups pi`.
+- **`unsupported operator` or the process exits right after "loading
+  detection model" when using `--detect`**: `tract` couldn't compile the
+  ONNX graph - almost always means the model wasn't exported the way this
+  app expects. Re-check the `yolo export` command in the README (fixed
+  input shape, no built-in NMS) rather than assuming it's a Pi-specific
+  problem; this fails the same way on a laptop. Video keeps working either
+  way - a failed model load only disables detection.
+- **`/healthz` shows `"detect":"loading"` for a long time**: normal on
+  first start - loading and optimizing the model takes a few seconds. If it
+  never moves past `"loading"`, check `journalctl -u winnie-cam -f` for the
+  load error.
+- **The Pi got noticeably hotter / video got choppier after enabling
+  `--detect`**: expected - sustained CPU inference is this app's biggest
+  power/heat cost by far, and can thermal-throttle an un-heatsinked Pi
+  enough to also affect the camera's hardware encode. Lower `--detect-fps`
+  and/or `--detect-size` (e.g. 256 instead of 320), and check
+  `vcgencmd measure_temp`.
