@@ -3,7 +3,7 @@
 //! boxes for the live overlay. This module is the home for *all*
 //! detection-derived features, not just the model pass itself - the
 //! [`motion`] submodule builds motion events on top of the person box this
-//! module produces, and is spawned from here (see [`spawn_all`]) rather
+//! module produces, and is spawned from here (see [`start`]) rather
 //! than existing as a separate top-level module, since it has no meaning
 //! without a person box to mask against.
 //!
@@ -69,13 +69,13 @@ use model::PERSON_CLASS;
 /// `Config` itself doesn't survive past startup (see `src/main.rs`), while
 /// this needs to live on in the worker thread and the pump task.
 #[derive(Clone, Debug)]
-pub struct DetectConfig {
-    pub model_path: PathBuf,
-    pub side: u32,
-    pub active_fps: f32,
-    pub idle_fps: f32,
-    pub threshold: f32,
-    pub iou: f32,
+struct DetectConfig {
+    model_path: PathBuf,
+    side: u32,
+    active_fps: f32,
+    idle_fps: f32,
+    threshold: f32,
+    iou: f32,
 }
 
 impl DetectConfig {
@@ -83,7 +83,7 @@ impl DetectConfig {
     /// without `--model` (clap's `requires = "model"` on `--detect` already
     /// prevents this at parse time, but a config built by hand - e.g. in a
     /// test - might not go through clap).
-    pub fn from_config(cfg: &Config) -> anyhow::Result<Option<Self>> {
+    fn from_config(cfg: &Config) -> anyhow::Result<Option<Self>> {
         if !cfg.detect {
             return Ok(None);
         }
@@ -104,7 +104,7 @@ impl DetectConfig {
 
 /// Handle to a spawned detector: the async pump task and the OS thread
 /// doing decode+inference. Both must be joined for a clean shutdown.
-pub struct DetectHandle {
+struct DetectHandle {
     pump: JoinHandle<()>,
     worker: std::thread::JoinHandle<()>,
 }
@@ -124,7 +124,7 @@ impl DetectHandle {
     /// external state (no open files, no locks anything else needs) that a
     /// clean finish would protect, so abandoning it mid-pass is safe; the
     /// OS reclaims the thread when the process exits.
-    pub async fn join(self) -> anyhow::Result<()> {
+    async fn join(self) -> anyhow::Result<()> {
         self.pump.await?;
 
         // Deliberately a bare `std::thread`, not `spawn_blocking`: tokio's
@@ -162,9 +162,9 @@ impl DetectHandle {
 /// video stream are never delayed by it (see `worker_loop`).
 ///
 /// Returns the [`DetectionHub`] (for the web layer to hold in `AppState`
-/// and hand out to `/detections` subscribers) alongside the [`DetectHandle`]
-/// (for `main` to join at shutdown).
-pub fn spawn(
+/// and hand out to `/detections` subscribers) alongside the `DetectHandle`
+/// (for [`start`] to fold into [`Detection`]).
+fn spawn(
     cfg: DetectConfig,
     hub: FrameHub,
     shutdown: CancellationToken,
@@ -186,23 +186,46 @@ pub fn spawn(
     (det_hub, DetectHandle { pump, worker })
 }
 
-/// Handles for everything `spawn_all` started: the person detector and,
-/// bundled with it, motion events. `detect_hub`/`motion_hub` are public for
-/// the web layer to hold in `AppState`; the two task handles are private -
-/// nothing outside this module needs them individually, only [`Self::join`].
-pub struct Handles {
-    pub detect_hub: DetectionHub,
-    pub motion_hub: motion::hub::MotionHub,
+struct Running {
+    detect_hub: DetectionHub,
+    motion_hub: motion::hub::MotionHub,
     detect: DetectHandle,
     motion: motion::MotionHandle,
 }
 
-impl Handles {
-    /// Joins both halves for a clean shutdown - see [`DetectHandle::join`]
-    /// and `motion::MotionHandle::join` for what each one actually waits on.
+/// Opaque so callers outside this module never need to know how many
+/// detectors exist here or which are gated on `--detect`.
+pub struct Detection(Option<Running>);
+
+/// Both fields are `None` together whenever `--detect` wasn't passed -
+/// motion has no switch of its own (see the [`motion`] module doc comment),
+/// so the two can never disagree about whether detection is on.
+#[derive(Clone)]
+pub struct DetectionHubs {
+    pub detect: Option<DetectionHub>,
+    pub motion: Option<motion::hub::MotionHub>,
+}
+
+impl Detection {
+    pub fn hubs(&self) -> DetectionHubs {
+        match &self.0 {
+            Some(r) => DetectionHubs {
+                detect: Some(r.detect_hub.clone()),
+                motion: Some(r.motion_hub.clone()),
+            },
+            None => DetectionHubs { detect: None, motion: None },
+        }
+    }
+
+    /// Joins every spawned task for a clean shutdown - see
+    /// `DetectHandle::join` and `motion::MotionHandle::join` for what each
+    /// one actually waits on.
     pub async fn join(self) -> anyhow::Result<()> {
-        self.detect.join().await?;
-        self.motion.join().await?;
+        let Some(running) = self.0 else {
+            return Ok(());
+        };
+        running.detect.join().await?;
+        running.motion.join().await?;
         Ok(())
     }
 }
@@ -210,20 +233,17 @@ impl Handles {
 /// The single entry point `main` uses: spawns the person detector and, since
 /// motion has no switch of its own (it's derived from the person box this
 /// produces - see the [`motion`] module doc comment), spawns motion right
-/// alongside it from the very [`DetectionHub`] this call produces. Returns
-/// `Ok(None)` when `--detect` wasn't passed, so there's nothing to spawn.
-pub fn spawn_all(
-    cfg: &Config,
-    hub: FrameHub,
-    shutdown: CancellationToken,
-) -> anyhow::Result<Option<Handles>> {
+/// alongside it from the very [`DetectionHub`] this call produces. When
+/// `--detect` wasn't passed, returns a [`Detection`] with nothing running -
+/// there's no separate disabled case for callers to branch on.
+pub fn start(cfg: &Config, hub: FrameHub, shutdown: CancellationToken) -> anyhow::Result<Detection> {
     let Some(detect_cfg) = DetectConfig::from_config(cfg)? else {
-        return Ok(None);
+        return Ok(Detection(None));
     };
     let (detect_hub, detect) = spawn(detect_cfg, hub.clone(), shutdown.clone());
     let motion_cfg = motion::MotionConfig::from_config(cfg);
     let (motion_hub, motion) = motion::spawn(motion_cfg, hub, detect_hub.clone(), shutdown);
-    Ok(Some(Handles { detect_hub, motion_hub, detect, motion }))
+    Ok(Detection(Some(Running { detect_hub, motion_hub, detect, motion })))
 }
 
 /// Async side: throttles and coalesces frames from the [`FrameHub`], and
@@ -513,5 +533,49 @@ mod tests {
         // Switch to a 1s (active) interval - a call 2s later should run,
         // even though the old 10s schedule wouldn't have allowed it yet.
         assert!(t.should_run(start + Duration::from_secs(2), Duration::from_secs(1)));
+    }
+
+    // `Config` has no `Default`, so build one the same way `main` does -
+    // through clap - rather than hand-listing every field.
+    fn parsed_config() -> Config {
+        use clap::Parser;
+        Config::parse_from(["winnie-cam"])
+    }
+
+    #[test]
+    fn detect_config_is_none_without_the_flag() {
+        let cfg = parsed_config();
+        assert!(!cfg.detect);
+        assert!(DetectConfig::from_config(&cfg).unwrap().is_none());
+    }
+
+    #[test]
+    fn detect_without_a_model_is_an_error() {
+        // Clap's `requires = "model"` on `--detect` blocks this combination
+        // at parse time (see `Config::detect`'s doc comment), so exercise
+        // `DetectConfig::from_config`'s own check directly by mutating a
+        // parsed `Config` past what the CLI would ever allow.
+        let mut cfg = parsed_config();
+        cfg.detect = true;
+        cfg.model = None;
+        assert!(DetectConfig::from_config(&cfg).is_err());
+    }
+
+    #[test]
+    fn start_without_the_flag_yields_no_hubs() {
+        let cfg = parsed_config();
+        let detection =
+            start(&cfg, FrameHub::new(), CancellationToken::new()).expect("start with --detect off");
+        let hubs = detection.hubs();
+        assert!(hubs.detect.is_none());
+        assert!(hubs.motion.is_none());
+    }
+
+    #[tokio::test]
+    async fn joining_a_disabled_detection_is_a_no_op() {
+        let cfg = parsed_config();
+        let detection =
+            start(&cfg, FrameHub::new(), CancellationToken::new()).expect("start with --detect off");
+        detection.join().await.expect("joining a disabled Detection");
     }
 }

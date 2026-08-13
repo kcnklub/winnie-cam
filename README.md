@@ -293,11 +293,11 @@ sudo usermod -aG video pi
   `DetectionHub::latest()`, a borrow-only accessor - never
   `DetectionHub::subscribe()`, which would pin `detect::pump_loop` to its
   active sample rate forever (see that function's doc comment).
-- `detect::spawn_all` is the single entry point `main.rs` calls: it spawns
-  the person detector and, since motion has no switch of its own, spawns
-  motion right alongside it from the `DetectionHub` that produces. Motion
-  living as a submodule of `detect` (not a top-level module next to it)
-  is also what lets the `decode_rgb`/`Throttle`/`fps_to_interval` helpers
-  `detect::motion` reuses stay private to `detect` - a private item is
-  visible to descendants of its defining module, so no `pub(crate)` is
+- `detect::start` is the single entry point `main.rs` calls: it spawns the
+  person detector and, since motion has no switch of its own, spawns motion
+  right alongside it from the `DetectionHub` that produces. Motion living as
+  a submodule of `detect` (not a top-level module next to it) is also what
+  lets the `decode_rgb`/`Throttle`/`fps_to_interval` helpers `detect::motion`
+  reuses stay private to `detect` - a private item is visible to descendants
+  of its defining module, so no `pub(crate)` is
   needed just to share them with a submodule.

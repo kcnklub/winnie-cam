@@ -18,6 +18,7 @@ use bytes::Bytes;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
+use crate::detect::DetectionHubs;
 use crate::detect::hub::DetectionHub;
 use crate::detect::motion::hub::MotionHub;
 use crate::hub::FrameHub;
@@ -57,16 +58,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(
-        hub: FrameHub,
-        detect: Option<DetectionHub>,
-        motion: Option<MotionHub>,
-        shutdown: CancellationToken,
-    ) -> Self {
+    pub fn new(hub: FrameHub, hubs: DetectionHubs, shutdown: CancellationToken) -> Self {
         Self {
             hub,
-            detect,
-            motion,
+            detect: hubs.detect,
+            motion: hubs.motion,
             viewers: Arc::new(AtomicUsize::new(0)),
             shutdown,
         }
