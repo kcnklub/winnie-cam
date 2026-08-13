@@ -13,7 +13,7 @@
 //! to descendants of its defining module, and this module is one.
 //!
 //! There is no separate `--motion` flag - motion runs whenever `--detect`
-//! does (see `MotionConfig::from_config`). `detect::spawn_all` spawns this
+//! does (see `MotionConfig::from_config`). `detect::start` spawns this
 //! module from the very `DetectionHub` that spawning the detector just
 //! produced, so the two literally cannot come apart at runtime.
 //!
@@ -60,7 +60,7 @@ use super::{Throttle, decode_rgb, fps_to_interval};
 /// Motion settings extracted from [`Config`]. Like `detect::DetectConfig`,
 /// kept separate from `Config` itself, which doesn't survive past startup.
 #[derive(Clone, Debug)]
-pub struct MotionConfig {
+pub(super) struct MotionConfig {
     pub fps: f32,
     pub grid_side: u32,
     pub pixel_delta: u8,
@@ -74,11 +74,11 @@ pub struct MotionConfig {
 
 impl MotionConfig {
     /// Unconditional: unlike `DetectConfig::from_config`, there's no
-    /// "motion disabled" case to report here. `detect::spawn_all` is the
+    /// "motion disabled" case to report here. `detect::start` is the
     /// only caller, and it only reaches this after already confirming
     /// `--detect` is on - motion has no separate switch, see this module's
     /// doc comment.
-    pub fn from_config(cfg: &Config) -> Self {
+    pub(super) fn from_config(cfg: &Config) -> Self {
         Self {
             fps: cfg.motion_fps,
             grid_side: cfg.motion_grid,
@@ -104,7 +104,7 @@ impl MotionConfig {
 /// Handle to a spawned motion pipeline: the async pump task and the OS
 /// thread doing decode+diff. Mirrors `detect::DetectHandle` exactly,
 /// including the join timeout - see that type's doc comments for why.
-pub struct MotionHandle {
+pub(super) struct MotionHandle {
     pump: JoinHandle<()>,
     worker: std::thread::JoinHandle<()>,
 }
@@ -112,7 +112,7 @@ pub struct MotionHandle {
 const WORKER_JOIN_TIMEOUT: Duration = Duration::from_secs(3);
 
 impl MotionHandle {
-    pub async fn join(self) -> anyhow::Result<()> {
+    pub(super) async fn join(self) -> anyhow::Result<()> {
         self.pump.await?;
 
         // Deliberately a bare `std::thread`, not `spawn_blocking` - see
@@ -136,10 +136,10 @@ impl MotionHandle {
 }
 
 /// Spawns the motion pump task and worker thread. Called from
-/// `detect::spawn_all` with the same `DetectionHub` its own call to
+/// `detect::start` with the same `DetectionHub` its own call to
 /// `detect::spawn` just returned - see this module's doc comment on why
 /// that pairing is enforced at the call site rather than checked here.
-pub fn spawn(
+pub(super) fn spawn(
     cfg: MotionConfig,
     frame_hub: FrameHub,
     det_hub: DetectionHub,

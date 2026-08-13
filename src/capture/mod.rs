@@ -1,9 +1,4 @@
 //! Camera capture backends.
-//!
-//! Two backends exist because the Pi CSI camera and a USB webcam need
-//! fundamentally different capture paths: see [`rpicam`] and [`v4l2`] for
-//! why. [`build`] picks between them, and [`supervise`] keeps whichever one
-//! is chosen running, restarting it after a failure.
 
 pub mod rpicam;
 pub mod v4l2;

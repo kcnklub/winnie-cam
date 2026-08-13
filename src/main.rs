@@ -38,46 +38,29 @@ async fn main() -> anyhow::Result<()> {
     let source = capture::build(&cfg)?;
     let capture_task = tokio::spawn(capture::supervise(source, hub.clone(), shutdown.clone()));
 
-    // Spawned before the listener binds: model loading happens on the
-    // detector's own worker thread, so it never delays the video stream
-    // coming up (see `detect::spawn`'s doc comment). `spawn_all` is the
-    // single entry point for everything detection-derived - person
-    // detection and motion events both - so there's no separate motion
-    // config to extract or gate on here; see `detect`'s module doc comment.
-    let detection = detect::spawn_all(&cfg, hub.clone(), shutdown.clone())?;
-    let (detect_hub, motion_hub) = match &detection {
-        Some(d) => (Some(d.detect_hub.clone()), Some(d.motion_hub.clone())),
-        None => (None, None),
-    };
+    let detection = detect::start(&cfg, hub.clone(), shutdown.clone())?;
 
     let listener = tokio::net::TcpListener::bind(cfg.bind)
         .await
         .with_context(|| format!("binding to {}", cfg.bind))?;
     tracing::info!(bind = %cfg.bind, "winnie-cam listening");
 
-    let app = web::router(web::AppState::new(hub, detect_hub, motion_hub, shutdown.clone()));
+    let app = web::router(web::AppState::new(hub, detection.hubs(), shutdown.clone()));
     let server_shutdown = shutdown.clone();
     axum::serve(listener, app)
         .with_graceful_shutdown(async move { server_shutdown.cancelled().await })
         .await
         .context("http server error")?;
 
-    // The server only returns after shutdown was triggered; make sure
-    // capture (and detection, if enabled) wind down too - they may already
-    // be stopping on their own.
     shutdown.cancel();
     capture_task
         .await
         .context("capture supervisor task panicked")?;
-    if let Some(d) = detection {
-        d.join().await.context("detection task panicked")?;
-    }
+    detection.join().await.context("detection task panicked")?;
 
     Ok(())
 }
 
-/// Waits for Ctrl-C or, on Unix, SIGTERM - covers both an interactive
-/// `cargo run` and a `systemctl stop` in production.
 async fn wait_for_shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
