@@ -239,6 +239,64 @@
   }
   #motion-list li.motion-empty { color: var(--text-faint); font-style: italic; }
 
+  /* Mute toggle lives in the activity panel's head rather than the main
+     control bar - it's only relevant once you're already looking at motion,
+     and keeps the control bar from growing a button most sessions won't
+     touch. */
+  .alert-sound-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; margin-left: var(--sp-2);
+    border: 0; border-radius: var(--r-full); background: transparent;
+    color: var(--text-faint); cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .alert-sound-btn:hover { color: var(--text-dim); background: var(--surface-hi); }
+  .alert-sound-btn[aria-pressed="true"] { color: var(--warn); }
+
+  /* The alert lives inside .stage (not the footer) so it survives fullscreen
+     and the iOS .immersive fallback, both of which hide .bar/.controls/.stats
+     (see body.immersive above) but not .stage's own children. Pinned to the
+     bottom - the top-right corner is already #exit-immersive's spot. Only
+     opacity is animated: no transform may touch .stage or anything between
+     it and #feed without desyncing the detection overlay (see the .stage
+     comment above). */
+  .motion-alert {
+    position: absolute; left: var(--sp-3); right: var(--sp-3); bottom: var(--sp-3);
+    z-index: 2;
+    display: flex; align-items: center; gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--r-md);
+    background: var(--surface); box-shadow: var(--shadow-card), inset 0 0 0 1px var(--warn-wash);
+    backdrop-filter: blur(4px);
+    animation: alert-in .2s ease-out;
+  }
+  @keyframes alert-in { from { opacity: 0; } to { opacity: 1; } }
+  .motion-alert-dot {
+    flex: none; width: 10px; height: 10px; border-radius: var(--r-full);
+    background: var(--warn); box-shadow: 0 0 0 4px var(--warn-wash);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  .motion-alert-text {
+    flex: 1; margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--text);
+  }
+  .motion-alert-btn {
+    flex: none; min-height: 36px; padding: 0 var(--sp-4); border: 0; border-radius: var(--r-md);
+    background: var(--warn); color: var(--bg); font: inherit; font-size: var(--fs-sm); font-weight: 700;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .motion-alert-btn:hover { background: var(--accent-hi); }
+  /* Mirrors .alert-sound-btn but lives on the banner itself, not just the
+     activity panel's head - body.immersive hides .motion-panel (see above),
+     so without a copy here the mute control would be unreachable exactly
+     when the banner is likely to be up: fullscreen, at night. */
+  .motion-alert-mute {
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border: 0; border-radius: var(--r-full);
+    background: transparent; color: var(--text-dim); cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .motion-alert-mute:hover { background: var(--surface-hi); }
+  .motion-alert-mute[aria-pressed="true"] { color: var(--warn); }
+
   :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   :focus:not(:focus-visible) { outline: none; }
 
@@ -279,6 +337,16 @@
       <button id="exit-immersive" class="stage-btn" type="button" aria-label="Exit fullscreen" hidden>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
+      <div id="motion-alert" class="motion-alert" role="alert" hidden>
+        <span class="motion-alert-dot" aria-hidden="true"></span>
+        <p class="motion-alert-text">Motion detected <span id="motion-alert-time"></span></p>
+        <button id="motion-alert-mute" class="motion-alert-mute" type="button" aria-pressed="true" aria-label="Mute motion alert sound">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 8a5 5 0 0 1 0 8" opacity=".8"/>
+          </svg>
+        </button>
+        <button id="motion-ack" class="motion-alert-btn" type="button">Acknowledge</button>
+      </div>
     </div>
 
     <div class="controls">
@@ -324,6 +392,11 @@
       <div class="motion-panel-head">
         <p class="motion-panel-title">Recent activity</p>
         <span id="motion-total" class="motion-total"></span>
+        <button id="alert-sound" class="alert-sound-btn" type="button" aria-pressed="true" aria-label="Mute motion alert sound">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 8a5 5 0 0 1 0 8" opacity=".8"/>
+          </svg>
+        </button>
       </div>
       <ul id="motion-list"><li class="motion-empty">No motion yet</li></ul>
     </div>
@@ -357,6 +430,11 @@
   const motionPanel = document.getElementById('motion-panel');
   const motionList = document.getElementById('motion-list');
   const motionTotal = document.getElementById('motion-total');
+  const motionAlert = document.getElementById('motion-alert');
+  const motionAlertTime = document.getElementById('motion-alert-time');
+  const motionAck = document.getElementById('motion-ack');
+  const alertSoundBtn = document.getElementById('alert-sound');
+  const motionAlertMuteBtn = document.getElementById('motion-alert-mute');
 
   const RECONNECT_DELAY_MS = 2000;
   const HEALTH_POLL_MS = 5000;
@@ -650,10 +728,23 @@
   // switch of its own (see --detect's help text), so its SSE connection
   // rides the Detect toggle's lifecycle below rather than getting a second
   // button.
+  //
+  // A `started` event also raises an acknowledgeable banner over the stage
+  // (see handleMotionEvent/showAlert below) - the pill and activity list are
+  // easy to miss, and this is a baby monitor. The banner, chime, and title
+  // flash are all local to this tab; there's no server-side ack state.
 
   const MAX_MOTION_ITEMS = 6;
+  const ALERT_CHIME_MIN_GAP_MS = 10000;
+  const ORIGINAL_TITLE = document.title;
   let eventsSource = null;
   let motionEvents = [];
+  let alertActive = false;
+  let lastAlertedSeq = -1;
+  let seededAlerts = false;
+  let lastChimeAt = 0;
+  let audioCtx = null;
+  let soundOn = true;
 
   function formatClockTime(unixMs) {
     return new Date(unixMs).toLocaleTimeString([], {
@@ -692,27 +783,173 @@
     motionLabel.textContent = active ? 'Moving' : 'Still';
   }
 
+  // --- Alert banner --------------------------------------------------------
+  //
+  // WebAudio is blocked until the page has had a user gesture, and Chrome
+  // only honors resume() as *part of* that gesture's call stack - creating
+  // the context later, from an SSE callback with no gesture on the stack
+  // (e.g. the very first chime, triggered by a live motion event before
+  // anyone has touched the page), leaves it permanently stuck `suspended`
+  // with a console warning. So the context is created (and resumed) here,
+  // eagerly, on the first gesture of any kind - not lazily inside chime()
+  // - and chime() just reuses whatever state that left it in. If the Detect
+  // toggle restores itself from localStorage on load with no prior gesture,
+  // the first chime may still be silent until this fires once.
+  function ensureAudioCtx() {
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (err) {}
+    }
+    return audioCtx;
+  }
+  function unlockAudio() {
+    const ctx = ensureAudioCtx();
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(function () {});
+  }
+  document.addEventListener('click', unlockAudio, { once: true, capture: true });
+  document.addEventListener('keydown', unlockAudio, { once: true, capture: true });
+  document.addEventListener('touchstart', unlockAudio, { once: true, capture: true, passive: true });
+
+  function chime() {
+    if (!soundOn) return;
+    const now = Date.now();
+    if (now - lastChimeAt < ALERT_CHIME_MIN_GAP_MS) return;
+    lastChimeAt = now;
+    try {
+      const ctx = ensureAudioCtx();
+      if (!ctx) return;
+      if (ctx.state === 'suspended') ctx.resume().catch(function () {});
+      const t0 = ctx.currentTime;
+      [660, 880].forEach(function (freq, i) {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const start = t0 + i * 0.16;
+        gain.gain.setValueAtTime(0, start);
+        gain.gain.linearRampToValueAtTime(0.2, start + 0.02);
+        gain.gain.linearRampToValueAtTime(0, start + 0.14);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + 0.15);
+      });
+    } catch (err) {
+      // No WebAudio support, or the context refused to start - the visual
+      // banner still does the job.
+    }
+  }
+
+  function setTitleFlash(on) {
+    document.title = on ? '(!) Motion — ' + ORIGINAL_TITLE : ORIGINAL_TITLE;
+  }
+
+  function showAlert(ev) {
+    motionAlertTime.textContent = formatClockTime(ev.at);
+    motionAlert.hidden = false;
+    setTitleFlash(true);
+    chime();
+    alertActive = true;
+  }
+
+  function clearAlert() {
+    if (!alertActive && motionAlert.hidden) return;
+    motionAlert.hidden = true;
+    setTitleFlash(false);
+    alertActive = false;
+  }
+
+  motionAck.addEventListener('click', clearAlert);
+
+  // Two buttons share this state - one in the activity panel (its permanent
+  // home) and one on the banner itself, since body.immersive hides the
+  // panel but not the banner (see the .motion-alert-mute CSS comment).
+  function syncSoundButtons() {
+    const label = soundOn ? 'Mute motion alert sound' : 'Unmute motion alert sound';
+    for (const btn of [alertSoundBtn, motionAlertMuteBtn]) {
+      btn.setAttribute('aria-pressed', soundOn ? 'true' : 'false');
+      btn.setAttribute('aria-label', label);
+    }
+  }
+
+  function toggleAlertSound() {
+    soundOn = !soundOn;
+    syncSoundButtons();
+    try { localStorage.setItem('winnie-alert-sound', soundOn ? '1' : '0'); } catch (e) {}
+  }
+
+  function initAlertSound() {
+    try { soundOn = localStorage.getItem('winnie-alert-sound') !== '0'; } catch (e) {}
+    syncSoundButtons();
+    alertSoundBtn.addEventListener('click', toggleAlertSound);
+    motionAlertMuteBtn.addEventListener('click', toggleAlertSound);
+  }
+
+  // Single path for every live/faked motion event (snapshot replay on
+  // (re)connect is handled separately below, since it needs to distinguish
+  // "already alerted" history from genuinely new events) so the pill/list/
+  // alert can't drift out of sync with each other.
+  function handleMotionEvent(ev) {
+    motionEvents.push(ev);
+    if (motionEvents.length > 50) motionEvents.shift();
+    renderMotionList();
+    setMotionState(ev.kind === 'started');
+    if (ev.kind === 'started') {
+      if (typeof ev.seq === 'number') lastAlertedSeq = Math.max(lastAlertedSeq, ev.seq);
+      showAlert(ev);
+    }
+  }
+
   function startEvents() {
     if (eventsSource) return;
     eventsSource = new EventSource('/events');
     eventsSource.addEventListener('snapshot', function (e) {
       try {
         const data = JSON.parse(e.data);
-        motionEvents = Array.isArray(data.events) ? data.events : [];
+        const events = Array.isArray(data.events) ? data.events : [];
+        motionEvents = events;
         renderMotionList();
         const last = motionEvents[motionEvents.length - 1];
         setMotionState(!!last && last.kind === 'started');
+
+        const maxSeq = events.reduce(function (m, e) {
+          return typeof e.seq === 'number' && e.seq > m ? e.seq : m;
+        }, -1);
+        if (!seededAlerts) {
+          // First snapshot after page load: absorb history silently. A
+          // freshly loaded page shouldn't open with an alert about
+          // something that happened before anyone was looking - the
+          // pill already shows current state.
+          seededAlerts = true;
+          lastAlertedSeq = maxSeq;
+        } else if (maxSeq < lastAlertedSeq) {
+          // seq resets to 0 on a server restart; a lower max than what
+          // we've already alerted on means the server restarted, not
+          // that time went backwards.
+          lastAlertedSeq = -1;
+          const startedEvents = events.filter(function (e) { return e.kind === 'started'; });
+          const latestStarted = startedEvents[startedEvents.length - 1];
+          if (latestStarted) {
+            lastAlertedSeq = latestStarted.seq;
+            showAlert(latestStarted);
+          }
+        } else {
+          // A reconnect after a network blip: alert only for `started`
+          // events we haven't alerted on yet, and only the newest one.
+          const unseen = events.filter(function (e) {
+            return e.kind === 'started' && typeof e.seq === 'number' && e.seq > lastAlertedSeq;
+          });
+          const latestUnseen = unseen[unseen.length - 1];
+          if (latestUnseen) {
+            lastAlertedSeq = latestUnseen.seq;
+            showAlert(latestUnseen);
+          }
+        }
       } catch (err) {
         // Malformed payload - ignore this tick.
       }
     });
     eventsSource.addEventListener('motion', function (e) {
       try {
-        const ev = JSON.parse(e.data);
-        motionEvents.push(ev);
-        if (motionEvents.length > 50) motionEvents.shift();
-        renderMotionList();
-        setMotionState(ev.kind === 'started');
+        handleMotionEvent(JSON.parse(e.data));
       } catch (err) {
         // Malformed payload - ignore this tick.
       }
@@ -769,6 +1006,7 @@
     toggle.classList.remove('on');
     toggle.setAttribute('aria-pressed', 'false');
     stopEvents();
+    clearAlert(); // motion is off - a stale banner would be misleading
     try { localStorage.setItem('winnie-detect', '0'); } catch (e) {}
   }
 
@@ -784,12 +1022,20 @@
   document.addEventListener('webkitfullscreenchange', function () { syncFullBtn(); drawOverlay(); });
 
   // A backgrounded tab has no business keeping the Pi busy running
-  // inference for a phone screen nobody's looking at, or holding open an
-  // events connection nobody can see either.
+  // inference for a phone screen nobody's looking at, so /detections closes.
+  // /events stays open, though: detection (and the motion pump riding on
+  // it) keeps running server-side regardless per detect::mod's idle-fps
+  // doc comment, so an open /events connection costs no extra inference.
+  // This doesn't buy live alerts while backgrounded - mobile browsers
+  // (notably iOS Safari) freeze a hidden tab's JS entirely, so nothing runs
+  // until it's foregrounded again. What it buys is catch-up: on return,
+  // EventSource reconnects and the server replays its ring buffer as a
+  // `snapshot`, so a `started` event missed while backgrounded still
+  // raises the banner as soon as someone looks - see the snapshot handler's
+  // seq bookkeeping in startEvents() above.
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) {
       if (es) { es.close(); es = null; }
-      stopEvents();
     } else if (toggle.classList.contains('on')) {
       startDetect();
     }
@@ -936,6 +1182,7 @@
 
   initTheme();
   initDim();
+  initAlertSound();
   readPaintTokens();
   syncFullBtn();
 
@@ -950,10 +1197,10 @@
         drawOverlay();
       },
       fakeMotion: function (kind, extra) {
-        const ev = Object.assign({ seq: 0, kind: kind, at: Date.now() }, extra || {});
-        motionEvents.push(ev);
-        renderMotionList();
-        setMotionState(kind === 'started');
+        handleMotionEvent(Object.assign({ seq: 0, kind: kind, at: Date.now() }, extra || {}));
+      },
+      audioState: function () {
+        return { exists: !!audioCtx, state: audioCtx ? audioCtx.state : null, soundOn: soundOn };
       },
     };
   }
