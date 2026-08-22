@@ -234,6 +234,16 @@ doing it often.
   Pi's IP address directly (`hostname -I` on the Pi) - `.local` resolution
   depends on mDNS/avahi working on both ends, which some routers or client
   devices don't support well.
+- **The IP address doesn't work either, but only from some devices**: if
+  the working devices are all wired and the failing ones are all Wi-Fi (or
+  vice versa), suspect **wireless client isolation** on the router/AP rather
+  than the Pi or the app. Isolation blocks station-to-station traffic
+  between wireless clients while leaving wired and AP traffic untouched -
+  exactly this asymmetry. It's usually a per-SSID "Isolate Clients" /
+  "AP Isolation" toggle in the router admin UI. Confirm before assuming it's
+  the cause: from the Pi, `ping` the device that can't connect - an ARP
+  entry stuck at `FAILED`/`INCOMPLETE` (`ip neigh`) means the Pi's own
+  broadcasts never reached it, which points at the AP, not at winnie-cam.
 - **Permission denied opening `/dev/video0`**: the user running the service
   isn't in the `video` group yet, or hasn't re-logged-in since being added
   (see step 1). Check with `groups pi`.

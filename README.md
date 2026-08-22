@@ -58,7 +58,9 @@ cargo run
 Then open `http://<host>:8080` in a browser - `http://localhost:8080` on
 the same machine, or `http://<pi-hostname>.local:8080` from another device
 on the LAN (Pi OS ships avahi, so `.local` resolution works without hunting
-for an IP).
+for an IP). If you'd rather not type a port, pass `--bind 0.0.0.0:80` and
+grant the process `CAP_NET_BIND_SERVICE` (see `deploy/winnie-cam.service`
+for the systemd version of this).
 
 If the camera ends up mounted upside down (a common outcome on a crib
 rail), add `--hflip`/`--vflip`.
