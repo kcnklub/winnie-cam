@@ -7,10 +7,15 @@
 //! earlier), which drives the ISP and JPEG encoder and writes MJPEG to
 //! stdout - so this backend just runs it as a subprocess and splits its
 //! stdout into frames.
+//!
+//! Config changes are detected via [`SharedVideoConfig::changed`]: when it
+//! fires the subprocess is killed, `run()` returns `Ok(())`, and
+//! [`supervise`] restarts it immediately with the new settings.
 
 use std::future::Future;
 use std::pin::Pin;
 use std::process::Stdio;
+use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
@@ -18,7 +23,7 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 use super::CaptureSource;
-use crate::config::Config;
+use crate::config::SharedVideoConfig;
 use crate::hub::FrameHub;
 use crate::jpeg::JpegSplitter;
 
@@ -31,37 +36,30 @@ pub struct RpicamCapture {
     /// `libcamera-vid`. Re-resolved on every retry via `from_config`-style
     /// construction isn't needed since the binary doesn't move at runtime.
     binary: String,
-    width: u32,
-    height: u32,
-    fps: u32,
-    quality: u8,
-    hflip: bool,
-    vflip: bool,
+    /// Runtime-changeable settings; [`SharedVideoConfig::changed`] signals
+    /// the capture loop to restart with fresh values.
+    video_config: Arc<SharedVideoConfig>,
 }
 
 impl RpicamCapture {
-    pub fn from_config(cfg: &Config) -> anyhow::Result<Self> {
-        anyhow::ensure!(cfg.width > 0 && cfg.height > 0, "width/height must be > 0");
-        anyhow::ensure!(cfg.fps > 0, "fps must be > 0");
+    pub fn from_config(video_config: Arc<SharedVideoConfig>) -> anyhow::Result<Self> {
+        let settings = video_config.settings.read().unwrap();
+        anyhow::ensure!(settings.width > 0 && settings.height > 0, "width/height must be > 0");
+        anyhow::ensure!(settings.fps > 0, "fps must be > 0");
+        drop(settings);
 
         let binary = super::find_in_path("rpicam-vid")
             .map(|_| "rpicam-vid".to_string())
             .or_else(|| super::find_in_path("libcamera-vid").map(|_| "libcamera-vid".to_string()))
             .unwrap_or_else(|| "rpicam-vid".to_string());
 
-        Ok(Self {
-            binary,
-            width: cfg.width,
-            height: cfg.height,
-            fps: cfg.fps,
-            quality: cfg.quality,
-            hflip: cfg.hflip,
-            vflip: cfg.vflip,
-        })
+        Ok(Self { binary, video_config })
     }
 
-    async fn run_impl(&self, hub: FrameHub, shutdown: CancellationToken) -> anyhow::Result<()> {
-        let mut cmd = Command::new(&self.binary);
+    /// Populate `cmd` with the arguments for the current settings, so both
+    /// the first launch and config-change restarts go through one code path.
+    fn build_command(&self, cmd: &mut Command) {
+        let s = self.video_config.settings.read().unwrap();
         cmd.arg("-t")
             .arg("0") // run indefinitely
             .arg("--codec")
@@ -69,21 +67,29 @@ impl RpicamCapture {
             .arg("-o")
             .arg("-") // write to stdout
             .arg("-n") // no preview window
-            .arg("--flush") // push each frame out immediately - keeps latency low
+            .arg("--flush") // push each frame out immediately
             .arg("--width")
-            .arg(self.width.to_string())
+            .arg(s.width.to_string())
             .arg("--height")
-            .arg(self.height.to_string())
+            .arg(s.height.to_string())
             .arg("--framerate")
-            .arg(self.fps.to_string())
+            .arg(s.fps.to_string())
             .arg("--quality")
-            .arg(self.quality.to_string());
-        if self.hflip {
+            .arg(s.quality.to_string());
+        if s.hflip {
             cmd.arg("--hflip");
         }
-        if self.vflip {
+        if s.vflip {
             cmd.arg("--vflip");
         }
+    }
+
+    async fn run_impl(&self, hub: FrameHub, shutdown: CancellationToken) -> anyhow::Result<()> {
+        let settings = self.video_config.settings.read().unwrap().clone();
+        drop(settings); // release the read lock before we start spawning
+
+        let mut cmd = Command::new(&self.binary);
+        self.build_command(&mut cmd);
         cmd.stdin(Stdio::null());
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
@@ -112,6 +118,14 @@ impl RpicamCapture {
         let result = loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break Ok(()),
+                _ = self.video_config.changed() => {
+                    // Config was updated — kill the subprocess and return
+                    // cleanly so `supervise` restarts us with fresh args.
+                    let _ = child.start_kill();
+                    let _ = child.wait().await;
+                    stderr_task.abort();
+                    return Ok(());
+                }
                 read = stdout.read(&mut buf) => {
                     match read {
                         Ok(0) => break Err(anyhow!("{} exited (stdout closed)", self.binary)),

@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use axum::Json;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{FromRef, State};
@@ -18,6 +19,7 @@ use bytes::Bytes;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
+use crate::config::{SharedVideoConfig, SourceKind, VideoSettingsUpdate};
 use crate::detect::hub::DetectionHub;
 use crate::detect::motion::hub::MotionHub;
 use crate::hub::FrameHub;
@@ -35,6 +37,8 @@ pub struct AppState {
     /// `None` whenever `detect` is - motion has no separate switch, see
     /// `motion`'s module doc comment.
     pub motion: Option<MotionHub>,
+    /// Runtime-changeable camera settings shared with the capture backend.
+    pub video_config: Arc<SharedVideoConfig>,
     /// Counts browser tabs watching `/stream.mjpeg`, separately from
     /// `FrameHub`'s own broadcast receiver count. Those two used to be the
     /// same number, but once detection exists the detector *also* holds a
@@ -61,12 +65,14 @@ impl AppState {
         hub: FrameHub,
         detect: Option<DetectionHub>,
         motion: Option<MotionHub>,
+        video_config: Arc<SharedVideoConfig>,
         shutdown: CancellationToken,
     ) -> Self {
         Self {
             hub,
             detect,
             motion,
+            video_config,
             viewers: Arc::new(AtomicUsize::new(0)),
             shutdown,
         }
@@ -90,6 +96,7 @@ pub fn router(state: AppState) -> Router {
         .route("/detections", get(detections))
         .route("/events", get(events))
         .route("/events.json", get(events_json))
+        .route("/api/config", get(get_config).put(update_config))
         .with_state(state)
 }
 
@@ -391,4 +398,55 @@ async fn events_json(State(state): State<AppState>) -> Response {
         motion_hub.recent_json(),
     )
         .into_response()
+}
+
+// --- Runtime config endpoints -------------------------------------------
+
+/// `GET /api/config` — current camera settings + backend kind.
+async fn get_config(State(state): State<AppState>) -> Response {
+    let settings = state.video_config.settings.read().unwrap().clone();
+    let backend = match state.video_config.source_kind {
+        SourceKind::Rpicam | SourceKind::Auto => "rpicam",
+        SourceKind::V4l2 => "v4l2",
+    };
+    let body = serde_json::json!({
+        "backend": backend,
+        "width": settings.width,
+        "height": settings.height,
+        "fps": settings.fps,
+        "quality": settings.quality,
+        "hflip": settings.hflip,
+        "vflip": settings.vflip,
+    })
+    .to_string();
+    ([(header::CONTENT_TYPE, "application/json")], body).into_response()
+}
+
+/// `PUT /api/config` — apply a partial set of updated settings.
+async fn update_config(
+    State(state): State<AppState>,
+    Json(update): Json<VideoSettingsUpdate>,
+) -> Response {
+    if let Err(msg) = update.validate() {
+        let body = serde_json::json!({"error": msg}).to_string();
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            [(header::CONTENT_TYPE, "application/json")],
+            body,
+        )
+            .into_response();
+    }
+
+    let changed = {
+        let mut settings = state.video_config.settings.write().unwrap();
+        update.apply_to(&mut settings)
+    };
+
+    if changed {
+        state.video_config.mark_changed();
+        tracing::info!(?update, "camera settings updated; restarting capture");
+    }
+
+    // Return the full config so the client doesn't need a follow-up GET.
+    get_config(State(state)).await
 }

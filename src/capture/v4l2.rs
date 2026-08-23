@@ -11,10 +11,15 @@
 //! buffers are cycled through). So frames are run through the same
 //! marker-aware [`JpegSplitter`] the rpicam backend uses, which finds the
 //! real `FF D9` and discards whatever the driver tacked on after it.
+//!
+//! Config changes are detected via [`SharedVideoConfig::take_signal`]
+//! between frames; when true the loop exits cleanly so [`supervise`]
+//! restarts it with the new settings.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::Arc;
 
 use anyhow::Context;
 use tokio_util::sync::CancellationToken;
@@ -25,7 +30,7 @@ use v4l::video::Capture;
 use v4l::{Format, Fraction, FourCC};
 
 use super::CaptureSource;
-use crate::config::Config;
+use crate::config::SharedVideoConfig;
 use crate::hub::FrameHub;
 use crate::jpeg::JpegSplitter;
 
@@ -34,31 +39,36 @@ const BUFFER_COUNT: u32 = 4;
 
 pub struct V4l2Capture {
     device: PathBuf,
-    width: u32,
-    height: u32,
-    fps: u32,
+    /// Runtime-changeable settings; checked between frames via
+    /// [`SharedVideoConfig::take_signal`].
+    video_config: Arc<SharedVideoConfig>,
 }
 
 impl V4l2Capture {
-    pub fn from_config(cfg: &Config) -> Self {
+    pub fn from_config(video_config: Arc<SharedVideoConfig>) -> Self {
         Self {
-            device: cfg.device.clone(),
-            width: cfg.width,
-            height: cfg.height,
-            fps: cfg.fps,
+            // The device path is the only capture-field not in
+            // VideoSettings; it's fixed at startup.
+            device: PathBuf::from("/dev/video0"),
+            video_config,
         }
+    }
+
+    /// Sets the `device` path (called after construction by `capture::build`,
+    /// which has the CLI [`Config`]).
+    pub fn with_device(mut self, device: PathBuf) -> Self {
+        self.device = device;
+        self
     }
 
     async fn run_impl(&self, hub: FrameHub, shutdown: CancellationToken) -> anyhow::Result<()> {
         let device = self.device.clone();
-        let width = self.width;
-        let height = self.height;
-        let fps = self.fps;
+        let video_config = Arc::clone(&self.video_config);
 
         // The v4l crate's I/O is blocking, so it gets its own thread rather
         // than stalling the tokio runtime.
         tokio::task::spawn_blocking(move || {
-            capture_loop(&device, width, height, fps, hub, shutdown)
+            capture_loop(&device, &video_config, hub, shutdown)
         })
         .await
         .context("v4l2 capture thread panicked")?
@@ -76,8 +86,9 @@ impl CaptureSource for V4l2Capture {
 }
 
 /// Runs synchronously on a blocking thread: opens the device, negotiates
-/// MJPEG at the requested resolution/fps, and publishes frames until
-/// `shutdown` is cancelled or the device errors out.
+/// MJPEG at the current resolution/fps from `video_config`, and publishes
+/// frames until `shutdown` is cancelled, the device errors out, or a config
+/// change is signaled.
 ///
 /// Cancellation is checked between frames rather than pre-empting an
 /// in-flight dequeue, so shutdown latency is bounded by one frame interval
@@ -85,12 +96,19 @@ impl CaptureSource for V4l2Capture {
 /// shutdown, not for hard real-time cancellation.
 fn capture_loop(
     device_path: &Path,
-    width: u32,
-    height: u32,
-    fps: u32,
+    video_config: &SharedVideoConfig,
     hub: FrameHub,
     shutdown: CancellationToken,
 ) -> anyhow::Result<()> {
+    // --- read current settings ---
+    // Snapshot once at the top so we don't have to re-read every iteration.
+    let (width, height, fps) = {
+        let s = video_config.settings.read().unwrap();
+        (s.width, s.height, s.fps)
+    };
+    // Consume any stale signal that may have fired before we entered.
+    video_config.take_signal();
+
     let dev = Device::with_path(device_path)
         .with_context(|| format!("opening {}", device_path.display()))?;
 
@@ -125,6 +143,10 @@ fn capture_loop(
     let mut splitter = JpegSplitter::new();
 
     while !shutdown.is_cancelled() {
+        // Check for config changes between frames.
+        if video_config.take_signal() {
+            return Ok(());
+        }
         let (buf, meta) = stream.next().context("dequeuing a frame")?;
         // `bytesused` is the driver's word for where this frame ends, but
         // isn't reliably exact (see module docs) - feed it through the
