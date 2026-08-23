@@ -18,7 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::broadcast;
 
-use crate::json::frac;
+use shared_types::{clamp_fraction, MotionEvent as WireMotionEvent, MotionSnapshot};
 use super::detector::MotionKind;
 
 /// How many past events `/events.json` and a freshly-connected `/events`
@@ -151,19 +151,16 @@ impl MotionHub {
         self.inner.ring.lock().expect("motion ring lock").events.iter().cloned().collect()
     }
 
-    /// `/events.json`'s body: the ring buffer, oldest first.
+    /// `/events.json`'s body: the ring buffer, oldest first, as a single
+    /// [`MotionSnapshot`] JSON object.
     pub fn recent_json(&self) -> String {
-        let events = self.recent();
-        let mut out = String::with_capacity(16 + events.len() * 72);
-        out.push_str("{\"events\":[");
-        for (i, e) in events.iter().enumerate() {
-            if i > 0 {
-                out.push(',');
-            }
-            out.push_str(&event_json(e));
-        }
-        out.push_str("]}");
-        out
+        let events: Vec<WireMotionEvent> = self
+            .recent()
+            .iter()
+            .map(|e| motion_event_to_wire(e))
+            .collect();
+        let snapshot = MotionSnapshot { events };
+        serde_json::to_string(&snapshot).expect("MotionSnapshot serialization is infallible")
     }
 }
 
@@ -173,23 +170,26 @@ impl Default for MotionHub {
     }
 }
 
-/// Hand-rolled JSON for one event, matching the style already established
-/// by `detect::hub::detections_json` and `web::healthz` - see the former's
-/// doc comment for why this project doesn't pull in `serde` for payloads
-/// this small. Runs `score` through [`frac`] so a non-finite value (should
-/// never happen, but inputs derived from float math aren't trusted blindly)
-/// can't reach the wire and break `JSON.parse` for every viewer.
+/// JSON serialization for one motion event, for the `/events` SSE stream.
 pub fn event_json(e: &MotionEvent) -> String {
-    let (kind, duration_field) = match e.kind {
-        MotionKind::Started => ("started", String::new()),
-        MotionKind::Stopped { duration_ms } => ("stopped", format!(",\"duration_ms\":{duration_ms}")),
+    let wire = motion_event_to_wire(e);
+    serde_json::to_string(&wire).expect("MotionEvent serialization is infallible")
+}
+
+/// Converts the internal [`MotionEvent`] (with its strongly-typed
+/// [`MotionKind`]) to the shared wire-format type.
+fn motion_event_to_wire(e: &MotionEvent) -> WireMotionEvent {
+    let (kind, duration_ms) = match e.kind {
+        MotionKind::Started => ("started", None),
+        MotionKind::Stopped { duration_ms } => ("stopped", Some(duration_ms)),
     };
-    format!(
-        "{{\"seq\":{},\"kind\":\"{kind}\",\"at\":{},\"score\":{:.4}{duration_field}}}",
-        e.seq,
-        e.at_unix_ms,
-        frac(e.score),
-    )
+    WireMotionEvent {
+        seq: e.seq,
+        kind: kind.into(),
+        at: e.at_unix_ms,
+        score: clamp_fraction(e.score),
+        duration_ms,
+    }
 }
 
 #[cfg(test)]
@@ -233,8 +233,19 @@ mod tests {
 
     #[test]
     fn event_json_has_the_expected_shape_for_started_and_stopped() {
-        let started = MotionEvent { seq: 3, kind: MotionKind::Started, at_unix_ms: 1000, score: 0.42 };
-        assert_eq!(event_json(&started), "{\"seq\":3,\"kind\":\"started\",\"at\":1000,\"score\":0.4200}");
+        let started = MotionEvent {
+            seq: 3,
+            kind: MotionKind::Started,
+            at_unix_ms: 1000,
+            score: 0.42,
+        };
+        let json = event_json(&started);
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["seq"], serde_json::json!(3));
+        assert_eq!(v["kind"], "started");
+        assert_eq!(v["at"], serde_json::json!(1000));
+        assert!((v["score"].as_f64().unwrap() - 0.42).abs() < 0.001);
+        assert!(v.get("duration_ms").is_none());
 
         let stopped = MotionEvent {
             seq: 4,
@@ -242,10 +253,13 @@ mod tests {
             at_unix_ms: 2000,
             score: 0.05,
         };
-        assert_eq!(
-            event_json(&stopped),
-            "{\"seq\":4,\"kind\":\"stopped\",\"at\":2000,\"score\":0.0500,\"duration_ms\":2500}"
-        );
+        let json = event_json(&stopped);
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["seq"], serde_json::json!(4));
+        assert_eq!(v["kind"], "stopped");
+        assert_eq!(v["at"], serde_json::json!(2000));
+        assert_eq!(v["duration_ms"], serde_json::json!(2500));
+        assert!((v["score"].as_f64().unwrap() - 0.05).abs() < 0.001);
     }
 
     #[test]
@@ -259,8 +273,15 @@ mod tests {
     #[test]
     fn recent_json_wraps_events_in_an_array() {
         let hub = MotionHub::new();
-        assert_eq!(hub.recent_json(), "{\"events\":[]}");
+        let json = hub.recent_json();
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["events"].as_array().unwrap().len(), 0);
+
         hub.publish(MotionKind::Started, 0.9);
-        assert!(hub.recent_json().starts_with("{\"events\":[{\"seq\":1,"));
+        let json = hub.recent_json();
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        let events = v["events"].as_array().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["seq"], serde_json::json!(1));
     }
 }

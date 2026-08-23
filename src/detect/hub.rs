@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 
+use shared_types::{clamp_coord, clamp_fraction, DetectionBox, DetectionPayload};
 use crate::detect::nms::BBox;
-use crate::json::{clamp_coord, frac};
 
 /// Lifecycle state, surfaced on `/healthz` so the frontend knows whether to
 /// show the overlay toggle at all.
@@ -179,45 +179,47 @@ impl Default for DetectionHub {
 }
 
 fn empty_json() -> String {
-    "{\"w\":0,\"h\":0,\"seq\":0,\"ms\":0.0,\"dets\":[]}".to_string()
+    let payload = DetectionPayload { w: 0, h: 0, seq: 0, ms: 0.0, dets: vec![] };
+    serde_json::to_string(&payload).expect("DetectionPayload serialization is infallible")
 }
 
-/// Hand-rolled JSON, matching the existing style in `src/web.rs`'s
-/// `healthz` handler - see that function's doc comment for why this
-/// project doesn't pull in `serde` for a payload this small. `boxes` are in
-/// source-frame pixel coordinates; this is what converts them to the 0..1
-/// fractions clients actually get, so the browser never needs to know the
-/// capture resolution.
+/// Builds a [`DetectionPayload`] from source-frame-pixel boxes, normalizing
+/// every coordinate to 0..1 fractions so the browser never needs to know
+/// the capture resolution. Every float is run through [`clamp_coord`] /
+/// [`clamp_fraction`] so a degenerate model output can't emit `NaN` or
+/// `Infinity` (which would break `JSON.parse` for every viewer).
 pub fn detections_json(src_w: u32, src_h: u32, seq: u64, ms: f32, boxes: &[BBox]) -> String {
-    let mut out = String::with_capacity(64 + boxes.len() * 72);
-    out.push_str(&format!(
-        "{{\"w\":{src_w},\"h\":{src_h},\"seq\":{seq},\"ms\":{:.1},\"dets\":[",
-        if ms.is_finite() { ms.max(0.0) } else { 0.0 }
-    ));
-    for (i, b) in boxes.iter().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        // Clamp the corners to the frame *first*, then derive w/h from the
-        // clamped corners - clamping origin and extent independently would
-        // keep the off-frame portion of a box that overhangs an edge (e.g.
-        // a person standing partly out of shot), drawing it too wide/tall.
-        let x1 = clamp_coord(b.x1, src_w as f32);
-        let y1 = clamp_coord(b.y1, src_h as f32);
-        let x2 = clamp_coord(b.x2, src_w as f32);
-        let y2 = clamp_coord(b.y2, src_h as f32);
-        let x = frac(x1 / src_w as f32);
-        let y = frac(y1 / src_h as f32);
-        let w = frac((x2 - x1) / src_w as f32);
-        let h = frac((y2 - y1) / src_h as f32);
-        let score = frac(b.score);
-        out.push_str(&format!(
-            "{{\"x\":{x:.4},\"y\":{y:.4},\"w\":{w:.4},\"h\":{h:.4},\
-             \"score\":{score:.4},\"label\":\"person\"}}"
-        ));
-    }
-    out.push_str("]}");
-    out
+    let dets: Vec<DetectionBox> = boxes
+        .iter()
+        .map(|b| {
+            // Clamp corners to the frame *first*, then derive w/h from the
+            // clamped corners - clamping origin and extent independently
+            // would keep the off-frame portion of a box that overhangs an
+            // edge, drawing it too wide/tall.
+            let x1 = clamp_coord(b.x1, src_w as f32);
+            let y1 = clamp_coord(b.y1, src_h as f32);
+            let x2 = clamp_coord(b.x2, src_w as f32);
+            let y2 = clamp_coord(b.y2, src_h as f32);
+            DetectionBox {
+                x: clamp_fraction(x1 / src_w as f32),
+                y: clamp_fraction(y1 / src_h as f32),
+                w: clamp_fraction((x2 - x1) / src_w as f32),
+                h: clamp_fraction((y2 - y1) / src_h as f32),
+                score: clamp_fraction(b.score),
+                label: "person".into(),
+            }
+        })
+        .collect();
+
+    let payload = DetectionPayload {
+        w: src_w,
+        h: src_h,
+        seq,
+        ms: if ms.is_finite() { ms.max(0.0) } else { 0.0 },
+        dets,
+    };
+
+    serde_json::to_string(&payload).expect("DetectionPayload serialization is infallible")
 }
 
 #[cfg(test)]
@@ -230,22 +232,30 @@ mod tests {
 
     #[test]
     fn serializes_an_empty_detection_list() {
-        assert_eq!(
-            detections_json(1280, 720, 1, 12.5, &[]),
-            "{\"w\":1280,\"h\":720,\"seq\":1,\"ms\":12.5,\"dets\":[]}"
-        );
+        let json = detections_json(1280, 720, 1, 12.5, &[]);
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(v["w"], serde_json::json!(1280));
+        assert_eq!(v["h"], serde_json::json!(720));
+        assert_eq!(v["seq"], serde_json::json!(1));
+        assert!((v["ms"].as_f64().unwrap() - 12.5).abs() < 0.1);
+        assert_eq!(v["dets"].as_array().unwrap().len(), 0);
     }
 
     #[test]
-    fn serializes_one_box_to_four_decimals() {
-        // 320-wide box at x=32 in a 1280-wide frame -> x=0.1, w=0.25.
+    fn serializes_one_box_with_normalized_coordinates() {
+        // 320-wide box at x=32 in a 1280-wide frame -> x=0.025, w=0.25.
         let boxes = [bbox(32.0, 36.0, 352.0, 108.0, 0.876_54)];
-        assert_eq!(
-            detections_json(1280, 720, 7, 100.0, &boxes),
-            "{\"w\":1280,\"h\":720,\"seq\":7,\"ms\":100.0,\"dets\":[\
-             {\"x\":0.0250,\"y\":0.0500,\"w\":0.2500,\"h\":0.1000,\
-             \"score\":0.8765,\"label\":\"person\"}]}"
-        );
+        let json = detections_json(1280, 720, 7, 100.0, &boxes);
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("valid JSON");
+        let det = &v["dets"][0];
+        assert!((det["x"].as_f64().unwrap() - 0.025).abs() < 0.001);
+        assert!((det["y"].as_f64().unwrap() - 0.05).abs() < 0.001);
+        assert!((det["w"].as_f64().unwrap() - 0.25).abs() < 0.001);
+        assert!((det["h"].as_f64().unwrap() - 0.1).abs() < 0.001);
+        assert!((det["score"].as_f64().unwrap() - 0.8765).abs() < 0.01);
+        assert_eq!(det["label"], "person");
     }
 
     #[test]
@@ -256,8 +266,15 @@ mod tests {
         // first (this fix) must report w=250/1280.
         let boxes = [bbox(-50.0, 0.0, 250.0, 100.0, 0.9)];
         let json = detections_json(1280, 720, 1, 1.0, &boxes);
-        assert!(json.contains("\"x\":0.0000"), "{json}");
-        assert!(json.contains(&format!("\"w\":{:.4}", 250.0 / 1280.0)), "{json}");
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("valid JSON");
+        let det = &v["dets"][0];
+        assert!((det["x"].as_f64().unwrap() - 0.0).abs() < 0.001, "x should be ~0, got {}", det["x"]);
+        let expected_w = 250.0 / 1280.0;
+        assert!(
+            (det["w"].as_f64().unwrap() - expected_w).abs() < 0.001,
+            "w should be ~{expected_w}, got {}", det["w"]
+        );
     }
 
     #[test]
@@ -269,16 +286,13 @@ mod tests {
         let json = detections_json(1280, 720, 1, f32::NAN, &boxes);
         assert!(!json.contains("NaN"), "must not emit the literal NaN: {json}");
         assert!(!json.contains("inf"), "must not emit inf/Infinity: {json}");
-        // Every numeric field *inside a box* must land in [0, 1] - scoped to
-        // the "dets" array so this doesn't also match the top-level "w"/"h"
-        // fields, which are the source resolution in pixels, not fractions.
-        let dets_start = json.find("\"dets\":[").expect("payload has a dets array");
-        let dets = &json[dets_start..];
-        for tok in ["\"x\":", "\"y\":", "\"w\":", "\"h\":", "\"score\":"] {
-            for part in dets.split(tok).skip(1) {
-                let end = part.find([',', '}']).unwrap();
-                let v: f32 = part[..end].parse().expect("valid float");
-                assert!((0.0..=1.0).contains(&v), "{tok}{v} out of range in {json}");
+        // Parse and check every box field is in [0, 1].
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("valid JSON");
+        for det in v["dets"].as_array().unwrap() {
+            for key in &["x", "y", "w", "h", "score"] {
+                let val = det[key].as_f64().unwrap();
+                assert!((0.0..=1.0).contains(&val), "{key}={val} out of range in {json}");
             }
         }
     }
