@@ -11,11 +11,12 @@ pub mod v4l2;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{Config, SourceKind};
+use crate::config::{Config, SharedVideoConfig, SourceKind};
 use crate::hub::FrameHub;
 
 /// A source of JPEG frames that publishes into a [`FrameHub`] until it
@@ -56,7 +57,16 @@ pub async fn supervise(source: Box<dyn CaptureSource>, hub: FrameHub, shutdown: 
         }
 
         match result {
-            Ok(()) => tracing::warn!("capture backend exited without an error; restarting"),
+            Ok(()) if !shutdown.is_cancelled() => {
+                // Config-change restart — not an error, no backoff.
+                tracing::debug!("capture backend clean exit; restarting with new settings");
+                backoff = INITIAL_BACKOFF;
+            }
+            Ok(()) => {
+                // Shutdown was requested — the caller will cancel the token
+                // again and the while loop's top check will break.
+                return;
+            }
             Err(err) => tracing::error!(error = %err, "capture backend failed; restarting"),
         }
 
@@ -73,9 +83,9 @@ pub async fn supervise(source: Box<dyn CaptureSource>, hub: FrameHub, shutdown: 
     }
 }
 
-/// Builds the capture source configured by `cfg`, resolving
-/// [`SourceKind::Auto`] by probing `PATH` for `rpicam-vid`/`libcamera-vid`.
-pub fn build(cfg: &Config) -> anyhow::Result<Box<dyn CaptureSource>> {
+/// Builds the capture source configured by `cfg` and bound to
+/// `video_config` (so it picks up runtime setting changes).
+pub fn build(cfg: &Config, video_config: &Arc<SharedVideoConfig>) -> anyhow::Result<Box<dyn CaptureSource>> {
     let kind = match cfg.source {
         SourceKind::Auto => {
             if find_in_path("rpicam-vid").is_some() || find_in_path("libcamera-vid").is_some() {
@@ -95,8 +105,11 @@ pub fn build(cfg: &Config) -> anyhow::Result<Box<dyn CaptureSource>> {
     };
 
     match kind {
-        SourceKind::Rpicam => Ok(Box::new(rpicam::RpicamCapture::from_config(cfg)?)),
-        SourceKind::V4l2 => Ok(Box::new(v4l2::V4l2Capture::from_config(cfg))),
+        SourceKind::Rpicam => Ok(Box::new(rpicam::RpicamCapture::from_config(Arc::clone(video_config))?)),
+        SourceKind::V4l2 => Ok(Box::new(
+            v4l2::V4l2Capture::from_config(Arc::clone(video_config))
+                .with_device(cfg.device.clone()),
+        )),
         SourceKind::Auto => unreachable!("resolved above"),
     }
 }

@@ -143,7 +143,8 @@
     filter: brightness(var(--dim, 1)); /* top-layer fullscreen doesn't inherit .app's filter */
   }
   body.immersive .stage { position: fixed; inset: 0; z-index: 100; }
-  body.immersive .bar, body.immersive .controls, body.immersive .stats, body.immersive .motion-panel {
+  body.immersive .bar, body.immersive .controls, body.immersive .stats, body.immersive .motion-panel,
+  body.immersive .settings-panel, body.immersive .settings-panel-status {
     display: none;
   }
 
@@ -300,6 +301,102 @@
   :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   :focus:not(:focus-visible) { outline: none; }
 
+  /* ── Settings panel ────────────────────────────────────────────────── */
+
+  .settings-panel {
+    background: var(--surface);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-card), inset 0 0 0 1px var(--line);
+    overflow: hidden;
+    animation: settings-in .25s ease-out;
+  }
+  @keyframes settings-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+
+  .settings-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: var(--sp-3) var(--sp-4) var(--sp-2);
+  }
+  .settings-title {
+    margin: 0; font-size: var(--fs-xs); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint);
+  }
+  .settings-tag {
+    font-size: var(--fs-xs); color: var(--text-faint);
+    padding: 2px 8px; border-radius: var(--r-full);
+    background: var(--bg-elev); border: 1px solid var(--line);
+  }
+
+  .settings-body {
+    display: flex; flex-direction: column; gap: var(--sp-2);
+    padding: 0 var(--sp-4) var(--sp-3);
+  }
+  .settings-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: var(--sp-3); min-height: 40px;
+  }
+  .settings-label {
+    font-size: var(--fs-sm); font-weight: 500; color: var(--text-dim);
+    flex: none; width: 100px;
+  }
+  .settings-input-group { display: flex; align-items: center; gap: var(--sp-1); flex: 1; }
+  .settings-select {
+    flex: 1; min-height: 38px; padding: 0 var(--sp-3);
+    border: 0; border-radius: var(--r-sm);
+    background: var(--surface-hi); color: var(--text);
+    font: inherit; font-size: var(--fs-sm);
+    cursor: pointer;
+  }
+  .settings-num {
+    flex: 1; min-height: 38px; padding: 0 var(--sp-3);
+    border: 0; border-radius: var(--r-sm);
+    background: var(--surface-hi); color: var(--text);
+    font: inherit; font-size: var(--fs-sm);
+  }
+  .settings-num:focus, .settings-select:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+  .settings-range-wrap { display: flex; align-items: center; gap: var(--sp-3); flex: 1; }
+  .settings-range {
+    flex: 1; height: 6px;
+    appearance: none; -webkit-appearance: none;
+    background: var(--surface-hi); border-radius: var(--r-full);
+    accent-color: var(--accent);
+  }
+  .settings-range::-webkit-slider-thumb {
+    appearance: none; -webkit-appearance: none;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--accent); cursor: pointer;
+  }
+  .settings-range-out {
+    font-size: var(--fs-sm); font-weight: 600; font-variant-numeric: tabular-nums;
+    color: var(--text); min-width: 3ch; text-align: right;
+  }
+
+  .settings-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 52px; min-height: 36px; padding: 0 var(--sp-3);
+    border: 0; border-radius: var(--r-sm);
+    background: var(--surface-hi); color: var(--text-dim);
+    font: inherit; font-size: var(--fs-sm); font-weight: 600;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+    transition: background .15s ease, color .15s ease;
+  }
+  .settings-toggle[aria-pressed="true"] { background: var(--accent-wash); color: var(--accent-hi); }
+
+  .settings-actions {
+    display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-4) var(--sp-4);
+  }
+  .settings-error {
+    flex: 1; font-size: var(--fs-xs); color: var(--bad);
+  }
+
+  .settings-panel-status {
+    text-align: center; font-size: var(--fs-sm); color: var(--ok);
+    padding: var(--sp-2);
+  }
+
+  /* ── End settings panel ────────────────────────────────────────────── */
+
   @media (prefers-reduced-motion: reduce) {
     *, ::before, ::after {
       animation-duration: .01ms !important;
@@ -369,7 +466,85 @@
           <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>
         </svg>
       </button>
+      <button id="settings-btn" class="btn btn-icon" type="button" aria-pressed="false" aria-label="Camera settings">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </button>
     </div>
+
+    <div class="settings-panel" id="settings-panel" role="region" aria-label="Camera settings" hidden>
+      <div class="settings-head">
+        <p class="settings-title">Camera settings</p>
+        <span id="settings-backend" class="settings-tag"></span>
+      </div>
+      <div class="settings-body">
+        <div class="settings-row">
+          <label class="settings-label" for="s-width">Width</label>
+          <div class="settings-input-group">
+            <select id="s-width-preset" class="settings-select">
+              <option value="320">320</option>
+              <option value="640">640</option>
+              <option value="800">800</option>
+              <option value="1280" selected>1280</option>
+              <option value="1920">1920</option>
+              <option value="custom">custom</option>
+            </select>
+            <input id="s-width" class="settings-num" type="number" min="1" value="1280" hidden>
+          </div>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="s-height">Height</label>
+          <div class="settings-input-group">
+            <select id="s-height-preset" class="settings-select">
+              <option value="240">240</option>
+              <option value="480">480</option>
+              <option value="600">600</option>
+              <option value="720" selected>720</option>
+              <option value="1080">1080</option>
+              <option value="custom">custom</option>
+            </select>
+            <input id="s-height" class="settings-num" type="number" min="1" value="720" hidden>
+          </div>
+        </div>
+        <div class="settings-row">
+          <label class="settings-label" for="s-fps">FPS</label>
+          <div class="settings-input-group">
+            <select id="s-fps-preset" class="settings-select">
+              <option value="5">5</option>
+              <option value="10">10</option>
+              <option value="15">15</option>
+              <option value="20">20</option>
+              <option value="30" selected>30</option>
+              <option value="custom">custom</option>
+            </select>
+            <input id="s-fps" class="settings-num" type="number" min="1" value="30" hidden>
+          </div>
+        </div>
+        <div class="settings-row" id="s-quality-row">
+          <label class="settings-label" for="s-quality">Quality</label>
+          <div class="settings-range-wrap">
+            <input id="s-quality" class="settings-range" type="range" min="1" max="100" value="80">
+            <output id="s-quality-out" class="settings-range-out" for="s-quality">80</output>
+          </div>
+        </div>
+        <div class="settings-row" id="s-hflip-row">
+          <span class="settings-label">Flip horizontal</span>
+          <button id="s-hflip" class="settings-toggle" type="button" aria-pressed="false">Off</button>
+        </div>
+        <div class="settings-row" id="s-vflip-row">
+          <span class="settings-label">Flip vertical</span>
+          <button id="s-vflip" class="settings-toggle" type="button" aria-pressed="false">Off</button>
+        </div>
+      </div>
+      <div class="settings-actions" id="s-actions">
+        <span id="s-error" class="settings-error" hidden></span>
+        <button id="s-cancel" class="btn" type="button">Cancel</button>
+        <button id="s-apply" class="btn btn-wide" type="button">Apply</button>
+      </div>
+    </div>
+
+    <div class="settings-panel-status" id="settings-status" hidden></div>
 
     <footer class="stats">
       <span id="stat-since" class="stat"></span>
@@ -1169,6 +1344,196 @@
     snap.href = '/snapshot.jpg?ts=' + Date.now();
     snap.download = 'winnie-' + tsSlug() + '.jpg';
   });
+
+  // --- Settings panel -------------------------------------------------
+
+  const settingsBtn = document.getElementById('settings-btn');
+  const settingsPanel = document.getElementById('settings-panel');
+  const settingsBackend = document.getElementById('settings-backend');
+  const settingsStatus = document.getElementById('settings-status');
+  const sWidthPreset = document.getElementById('s-width-preset');
+  const sWidth = document.getElementById('s-width');
+  const sHeightPreset = document.getElementById('s-height-preset');
+  const sHeight = document.getElementById('s-height');
+  const sFpsPreset = document.getElementById('s-fps-preset');
+  const sFps = document.getElementById('s-fps');
+  const sQualityRow = document.getElementById('s-quality-row');
+  const sQuality = document.getElementById('s-quality');
+  const sQualityOut = document.getElementById('s-quality-out');
+  const sHflipRow = document.getElementById('s-hflip-row');
+  const sHflip = document.getElementById('s-hflip');
+  const sVflipRow = document.getElementById('s-vflip-row');
+  const sVflip = document.getElementById('s-vflip');
+  const sError = document.getElementById('s-error');
+
+  const PRESET_SPECS = {
+    width:  { sel: sWidthPreset,  inp: sWidth  },
+    height: { sel: sHeightPreset, inp: sHeight },
+    fps:    { sel: sFpsPreset,    inp: sFps    },
+  };
+
+  // Show/hide the custom number input when "custom" is picked.
+  function syncPreset(key) {
+    const spec = PRESET_SPECS[key];
+    const showCustom = spec.sel.value === 'custom';
+    spec.inp.hidden = !showCustom;
+    spec.sel.hidden = showCustom;
+    if (!showCustom) spec.inp.value = spec.sel.value;
+  }
+  sWidthPreset.addEventListener('change', function () { syncPreset('width'); });
+  sHeightPreset.addEventListener('change', function () { syncPreset('height'); });
+  sFpsPreset.addEventListener('change', function () { syncPreset('fps'); });
+
+  sQuality.addEventListener('input', function () {
+    sQualityOut.textContent = sQuality.value;
+  });
+
+  function setToggle(btn, on) {
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.textContent = on ? 'On' : 'Off';
+  }
+  sHflip.addEventListener('click', function () {
+    setToggle(sHflip, sHflip.getAttribute('aria-pressed') !== 'true');
+  });
+  sVflip.addEventListener('click', function () {
+    setToggle(sVflip, sVflip.getAttribute('aria-pressed') !== 'true');
+  });
+
+  // Fill all form fields from a parsed /api/config response.
+  function populateForm(cfg) {
+    // Backend tag + show/hide rpicam-only controls
+    settingsBackend.textContent = cfg.backend;
+    var isRpi = cfg.backend === 'rpicam';
+    sQualityRow.hidden = !isRpi;
+    sHflipRow.hidden = !isRpi;
+    sVflipRow.hidden = !isRpi;
+
+    // Resolution
+    if ([320, 640, 800, 1280, 1920].indexOf(cfg.width) >= 0) {
+      sWidthPreset.value = String(cfg.width);
+      sWidth.hidden = true;
+      sWidthPreset.hidden = false;
+    } else {
+      sWidthPreset.value = 'custom';
+      sWidthPreset.hidden = true;
+      sWidth.hidden = false;
+      sWidth.value = cfg.width;
+    }
+    if ([240, 480, 600, 720, 1080].indexOf(cfg.height) >= 0) {
+      sHeightPreset.value = String(cfg.height);
+      sHeight.hidden = true;
+      sHeightPreset.hidden = false;
+    } else {
+      sHeightPreset.value = 'custom';
+      sHeightPreset.hidden = true;
+      sHeight.hidden = false;
+      sHeight.value = cfg.height;
+    }
+    if ([5, 10, 15, 20, 30].indexOf(cfg.fps) >= 0) {
+      sFpsPreset.value = String(cfg.fps);
+      sFps.hidden = true;
+      sFpsPreset.hidden = false;
+    } else {
+      sFpsPreset.value = 'custom';
+      sFpsPreset.hidden = true;
+      sFps.hidden = false;
+      sFps.value = cfg.fps;
+    }
+
+    sQuality.value = cfg.quality;
+    sQualityOut.textContent = cfg.quality;
+    setToggle(sHflip, cfg.hflip);
+    setToggle(sVflip, cfg.vflip);
+    sError.hidden = true;
+  }
+
+  // Read the current value from the form for each of the six fields.
+  function readForm() {
+    return {
+      width:  Number(sWidthPreset.hidden  ? sWidth.value  : sWidthPreset.value),
+      height: Number(sHeightPreset.hidden ? sHeight.value : sHeightPreset.value),
+      fps:    Number(sFpsPreset.hidden    ? sFps.value    : sFpsPreset.value),
+      quality: parseInt(sQuality.value, 10),
+      hflip:  sHflip.getAttribute('aria-pressed') === 'true',
+      vflip:  sVflip.getAttribute('aria-pressed') === 'true',
+    };
+  }
+
+  async function fetchConfig() {
+    var res = await fetch('/api/config', { cache: 'no-store' });
+    return res.json();
+  }
+
+  async function applySettings() {
+    var newCfg = readForm();
+    // Quick client-side validation
+    if (!newCfg.width || !newCfg.height || !newCfg.fps ||
+        newCfg.quality < 1 || newCfg.quality > 100) {
+      showSettingsError('All values must be positive; quality must be 1–100.');
+      return;
+    }
+
+    var res = await fetch('/api/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newCfg),
+      cache: 'no-store',
+    });
+
+    if (res.ok) {
+      var cfg = await res.json();
+      populateForm(cfg);
+      showSettingsStatus('Applied — restarting capture…');
+      setTimeout(function () {
+        if (settingsStatus.textContent === 'Applied — restarting capture…') {
+          settingsStatus.hidden = true;
+        }
+      }, 3000);
+      closeSettings();
+    } else {
+      var body = await res.json().catch(function () { return {}; });
+      showSettingsError(body.error || 'Failed to apply settings.');
+    }
+  }
+
+  function showSettingsError(msg) {
+    sError.textContent = msg;
+    sError.hidden = false;
+    settingsStatus.hidden = true;
+  }
+
+  function showSettingsStatus(msg) {
+    settingsStatus.textContent = msg;
+    settingsStatus.hidden = false;
+    sError.hidden = true;
+  }
+
+  async function openSettings() {
+    try {
+      var cfg = await fetchConfig();
+      populateForm(cfg);
+    } catch (e) {
+      // If the server is unreachable right now, keep whatever was in the
+      // form — at least the user can still change values and apply later.
+    }
+    settingsPanel.hidden = false;
+    settingsBtn.setAttribute('aria-pressed', 'true');
+    settingsBtn.classList.add('on');
+    sError.hidden = true;
+    settingsStatus.hidden = true;
+  }
+
+  function closeSettings() {
+    settingsPanel.hidden = true;
+    settingsBtn.setAttribute('aria-pressed', 'false');
+    settingsBtn.classList.remove('on');
+  }
+
+  settingsBtn.addEventListener('click', function () {
+    if (settingsPanel.hidden) openSettings(); else closeSettings();
+  });
+  document.getElementById('s-cancel').addEventListener('click', closeSettings);
+  document.getElementById('s-apply').addEventListener('click', applySettings);
 
   // --- Bootstrap -----------------------------------------------------------
 

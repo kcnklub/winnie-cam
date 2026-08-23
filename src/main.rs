@@ -6,12 +6,14 @@ mod jpeg;
 mod json;
 mod web;
 
+use std::sync::Arc;
+
 use anyhow::Context;
 use clap::Parser;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
-use config::Config;
+use config::{Config, SharedVideoConfig, SourceKind};
 use hub::FrameHub;
 
 #[tokio::main]
@@ -27,6 +29,11 @@ async fn main() -> anyhow::Result<()> {
     let hub = FrameHub::new();
     let shutdown = CancellationToken::new();
 
+    // Resolve Auto -> Rpicam or V4l2 early; both SharedVideoConfig and
+    // capture::build need the concrete kind.
+    let source_kind = resolve_source(&cfg);
+    let video_config = Arc::new(SharedVideoConfig::new(&cfg, source_kind));
+
     tokio::spawn({
         let shutdown = shutdown.clone();
         async move {
@@ -35,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let source = capture::build(&cfg)?;
+    let source = capture::build(&cfg, &video_config)?;
     let capture_task = tokio::spawn(capture::supervise(source, hub.clone(), shutdown.clone()));
 
     // Spawned before the listener binds: model loading happens on the
@@ -55,7 +62,13 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("binding to {}", cfg.bind))?;
     tracing::info!(bind = %cfg.bind, "winnie-cam listening");
 
-    let app = web::router(web::AppState::new(hub, detect_hub, motion_hub, shutdown.clone()));
+    let app = web::router(web::AppState::new(
+        hub,
+        detect_hub,
+        motion_hub,
+        video_config,
+        shutdown.clone(),
+    ));
     let server_shutdown = shutdown.clone();
     axum::serve(listener, app)
         .with_graceful_shutdown(async move { server_shutdown.cancelled().await })
@@ -74,6 +87,31 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Resolves [`SourceKind::Auto`] by probing PATH for the rpicam binary,
+/// matching the logic that `capture::build` used before the shared-config
+/// refactor.
+fn resolve_source(cfg: &Config) -> SourceKind {
+    match cfg.source {
+        SourceKind::Auto => {
+            if capture::find_in_path("rpicam-vid").is_some()
+                || capture::find_in_path("libcamera-vid").is_some()
+            {
+                tracing::info!(
+                    "found rpicam-vid/libcamera-vid on PATH, using the Pi CSI camera backend"
+                );
+                SourceKind::Rpicam
+            } else {
+                tracing::info!(
+                    device = %cfg.device.display(),
+                    "no rpicam-vid/libcamera-vid on PATH, falling back to the V4L2 backend"
+                );
+                SourceKind::V4l2
+            }
+        }
+        other => other,
+    }
 }
 
 /// Waits for Ctrl-C or, on Unix, SIGTERM - covers both an interactive

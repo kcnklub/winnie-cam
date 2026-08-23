@@ -1,7 +1,11 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::RwLock;
 
 use clap::{Parser, ValueEnum};
+use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 
 /// A simple LAN baby-monitor camera server: forwards a camera's video to any
 /// browser on the network as an MJPEG stream.
@@ -143,4 +147,124 @@ pub enum SourceKind {
     Auto,
     Rpicam,
     V4l2,
+}
+
+/// The subset of [`Config`] that can be changed at runtime via the web UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VideoSettings {
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    pub quality: u8,
+    pub hflip: bool,
+    pub vflip: bool,
+}
+
+impl VideoSettings {
+    pub fn from_config(cfg: &Config) -> Self {
+        Self {
+            width: cfg.width,
+            height: cfg.height,
+            fps: cfg.fps,
+            quality: cfg.quality,
+            hflip: cfg.hflip,
+            vflip: cfg.vflip,
+        }
+    }
+}
+
+/// Partial update payload for `PUT /api/config` — every field is optional.
+#[derive(Debug, Deserialize)]
+pub struct VideoSettingsUpdate {
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub fps: Option<u32>,
+    pub quality: Option<u8>,
+    pub hflip: Option<bool>,
+    pub vflip: Option<bool>,
+}
+
+impl VideoSettingsUpdate {
+    /// Returns `Ok(())` if every present field passes range checks, or an
+    /// error message suitable for a 422 body.
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(w) = self.width {
+            if w == 0 { return Err("width must be > 0".into()); }
+        }
+        if let Some(h) = self.height {
+            if h == 0 { return Err("height must be > 0".into()); }
+        }
+        if let Some(f) = self.fps {
+            if f == 0 { return Err("fps must be > 0".into()); }
+        }
+        if let Some(q) = self.quality {
+            if q < 1 || q > 100 { return Err("quality must be 1-100".into()); }
+        }
+        Ok(())
+    }
+
+    /// Apply every `Some` field to `target`; fields left `None` are left
+    /// alone. Returns `true` if at least one field actually changed.
+    pub fn apply_to(&self, target: &mut VideoSettings) -> bool {
+        let mut changed = false;
+        if let Some(w) = self.width {
+            if target.width != w { target.width = w; changed = true; }
+        }
+        if let Some(h) = self.height {
+            if target.height != h { target.height = h; changed = true; }
+        }
+        if let Some(f) = self.fps {
+            if target.fps != f { target.fps = f; changed = true; }
+        }
+        if let Some(q) = self.quality {
+            if target.quality != q { target.quality = q; changed = true; }
+        }
+        if let Some(hf) = self.hflip {
+            if target.hflip != hf { target.hflip = hf; changed = true; }
+        }
+        if let Some(vf) = self.vflip {
+            if target.vflip != vf { target.vflip = vf; changed = true; }
+        }
+        changed
+    }
+}
+
+/// Shared mutable config that both the capture pipeline and the web layer
+/// hold a reference to. Writing new settings signals the running capture
+/// backend to restart with the new values.
+pub struct SharedVideoConfig {
+    pub settings: RwLock<VideoSettings>,
+    pub source_kind: SourceKind,
+    notify: Notify,
+    signal: AtomicBool,
+}
+
+impl SharedVideoConfig {
+    pub fn new(cfg: &Config, source_kind: SourceKind) -> Self {
+        Self {
+            settings: RwLock::new(VideoSettings::from_config(cfg)),
+            source_kind,
+            notify: Notify::new(),
+            signal: AtomicBool::new(false),
+        }
+    }
+
+    /// Signal the running capture backend to restart with the latest
+    /// settings. Safe to call from any thread.
+    pub fn mark_changed(&self) {
+        self.signal.store(true, Ordering::Release);
+        self.notify.notify_one();
+    }
+
+    /// Async: resolves when `mark_changed` is called. Used by the rpicam
+    /// backend inside its `tokio::select!` loop.
+    pub async fn changed(&self) {
+        self.notify.notified().await;
+    }
+
+    /// Sync: atomically reads and clears the change signal. Used by the
+    /// V4L2 blocking capture loop between frames.
+    pub fn take_signal(&self) -> bool {
+        self.signal.swap(false, Ordering::Acquire)
+    }
 }
