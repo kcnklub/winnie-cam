@@ -18,6 +18,7 @@ use axum::routing::get;
 use bytes::Bytes;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
+use tower_http::services::ServeDir;
 
 use shared_types::{ErrorResponse, HealthzResponse, VideoSettingsUpdate};
 
@@ -99,6 +100,7 @@ pub fn router(state: AppState) -> Router {
         .route("/events", get(events))
         .route("/events.json", get(events_json))
         .route("/api/config", get(get_config).put(update_config))
+        .nest_service("/v2", ServeDir::new("frontend/dist"))
         .with_state(state)
 }
 

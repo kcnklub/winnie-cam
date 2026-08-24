@@ -4,12 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["shared-types"]
+members = ["shared-types", "frontend"]
 
 [dependencies]
 shared-types = { path = "shared-types" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "net", "sync", "signal", "time"] }
 axum = "0.8"
+tower-http = { version = "0.6", features = ["fs"] }
 tokio-stream = "0.1"
 tokio-util = "0.7"
 async-stream = "0.3"
