@@ -27,7 +27,7 @@ use v4l::buffer::Type;
 use v4l::io::traits::CaptureStream;
 use v4l::prelude::*;
 use v4l::video::Capture;
-use v4l::{Format, Fraction, FourCC};
+use v4l::{Format, FourCC, Fraction};
 
 use super::CaptureSource;
 use crate::config::SharedVideoConfig;
@@ -67,11 +67,9 @@ impl V4l2Capture {
 
         // The v4l crate's I/O is blocking, so it gets its own thread rather
         // than stalling the tokio runtime.
-        tokio::task::spawn_blocking(move || {
-            capture_loop(&device, &video_config, hub, shutdown)
-        })
-        .await
-        .context("v4l2 capture thread panicked")?
+        tokio::task::spawn_blocking(move || capture_loop(&device, &video_config, hub, shutdown))
+            .await
+            .context("v4l2 capture thread panicked")?
     }
 }
 

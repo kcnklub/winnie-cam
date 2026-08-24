@@ -6,8 +6,15 @@ Leptos client-side-rendered SPA, built with [Trunk](https://trunkrs.dev/).
 
 ```bash
 rustup target add wasm32-unknown-unknown
-cargo install trunk   # or grab a prebuilt binary from the Trunk GitHub releases
+cargo install trunk@0.21.5 --locked   # see version pin note below
 ```
+
+> **Trunk version pin.** We pin trunk to `0.21.5` — the last release whose
+> `trunk serve --proxy-backend=...` works when the backend is served at the
+> root path. trunk `0.21.6` through `0.22.0-beta.x` panic at startup
+> (`Nesting at the root is no longer supported`) because they call axum 0.8's
+> root-level `nest_service`, which was removed. Do not `cargo install trunk`
+> without a version until that regression is fixed upstream.
 
 ## Development
 
@@ -20,7 +27,7 @@ cargo run --release
 
 # terminal 2 — frontend with hot reload
 cd frontend
-trunk serve --proxy-backend=http://127.0.0.1:8080
+trunk serve --port 8081 --proxy-backend=http://127.0.0.1:8080
 ```
 
 Open http://localhost:8081 — the frontend proxies `/stream.mjpeg`,

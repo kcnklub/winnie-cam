@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::{Parser, ValueEnum};
 use tokio::sync::Notify;

@@ -167,7 +167,12 @@ pub fn spawn(
 /// ticks the debounce state machine so an in-flight episode can close out
 /// cleanly instead of lingering once the person leaves frame.
 enum MotionInput {
-    Frame { jpeg: Bytes, boxes: Vec<BBox>, src_w: u32, src_h: u32 },
+    Frame {
+        jpeg: Bytes,
+        boxes: Vec<BBox>,
+        src_w: u32,
+        src_h: u32,
+    },
     NoSubject,
 }
 
@@ -276,7 +281,12 @@ fn worker_loop(cfg: MotionConfig, hub: MotionHub, mut work_rx: mpsc::Receiver<Mo
                 // subject left.
                 have_baseline = false;
             }
-            MotionInput::Frame { jpeg, boxes, src_w, src_h } => {
+            MotionInput::Frame {
+                jpeg,
+                boxes,
+                src_w,
+                src_h,
+            } => {
                 let (w, h) = match decode_rgb(&jpeg, &mut rgb) {
                     Ok(dims) => dims,
                     Err(err) => {
@@ -301,7 +311,10 @@ fn worker_loop(cfg: MotionConfig, hub: MotionHub, mut work_rx: mpsc::Receiver<Mo
                     // cut-filter switching light up the *whole* frame, not
                     // just the masked region - real movement shouldn't
                     // light up the unmasked region nearly as much.
-                    Some(s) => (s.inside >= cfg.threshold && s.outside < s.inside * 0.6, s.inside),
+                    Some(s) => (
+                        s.inside >= cfg.threshold && s.outside < s.inside * 0.6,
+                        s.inside,
+                    ),
                     None => (false, 0.0),
                 };
 

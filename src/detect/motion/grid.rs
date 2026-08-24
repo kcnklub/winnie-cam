@@ -156,7 +156,13 @@ mod tests {
     }
 
     fn bbox(x1: f32, y1: f32, x2: f32, y2: f32) -> BBox {
-        BBox { x1, y1, x2, y2, score: 1.0 }
+        BBox {
+            x1,
+            y1,
+            x2,
+            y2,
+            score: 1.0,
+        }
     }
 
     #[test]
@@ -174,7 +180,13 @@ mod tests {
         let grid = vec![128u8; 16];
         let mask = vec![true; 16];
         let s = score(&grid, &grid, &mask, 12).unwrap();
-        assert_eq!(s, Score { inside: 0.0, outside: 0.0 });
+        assert_eq!(
+            s,
+            Score {
+                inside: 0.0,
+                outside: 0.0
+            }
+        );
     }
 
     #[test]

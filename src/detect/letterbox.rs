@@ -267,8 +267,10 @@ mod tests {
         let side = 320usize;
         // Centre of the resized region (pad_y=70, new_h=180 -> centre row 160).
         let (cx, cy) = (160usize, 160usize);
-        let r = dst[0 * side * side + cy * side + cx];
-        let g = dst[1 * side * side + cy * side + cx];
+        // Channel-major tensor: plane = side * side, so R is plane 0 and
+        // G is plane 1.
+        let r = dst[cy * side + cx];
+        let g = dst[side * side + cy * side + cx];
         assert!(
             (r - 1.0).abs() < 1e-6,
             "expected full-intensity red, got {r}"

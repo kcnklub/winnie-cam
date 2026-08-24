@@ -29,8 +29,13 @@ pub enum MotionKind {
 #[derive(Debug, Clone, Copy)]
 enum Phase {
     Still,
-    Rising { since: Instant },
-    Active { since: Instant, last_moving: Instant },
+    Rising {
+        since: Instant,
+    },
+    Active {
+        since: Instant,
+        last_moving: Instant,
+    },
 }
 
 /// One monitored subject's motion state. `motion::worker_loop` owns exactly
@@ -43,7 +48,11 @@ pub struct MotionDetector {
 
 impl MotionDetector {
     pub fn new(cfg: DebounceConfig) -> Self {
-        Self { phase: Phase::Still, last_stopped: None, cfg }
+        Self {
+            phase: Phase::Still,
+            last_stopped: None,
+            cfg,
+        }
     }
 
     /// Feed one sample's motion verdict (`moving`, from a masked frame
@@ -71,8 +80,9 @@ impl MotionDetector {
                 if now.duration_since(since) < self.cfg.sustain {
                     return None;
                 }
-                let in_cooldown =
-                    self.last_stopped.is_some_and(|t| now < t + self.cfg.cooldown);
+                let in_cooldown = self
+                    .last_stopped
+                    .is_some_and(|t| now < t + self.cfg.cooldown);
                 if in_cooldown {
                     // Sustain met, but still cooling down from the last
                     // episode: stay in `Rising` (not `Still`) so continued
@@ -80,12 +90,18 @@ impl MotionDetector {
                     // of needing another full `sustain` window on top of it.
                     return None;
                 }
-                self.phase = Phase::Active { since, last_moving: now };
+                self.phase = Phase::Active {
+                    since,
+                    last_moving: now,
+                };
                 Some(MotionKind::Started)
             }
             Phase::Active { since, last_moving } => {
                 if moving {
-                    self.phase = Phase::Active { since, last_moving: now };
+                    self.phase = Phase::Active {
+                        since,
+                        last_moving: now,
+                    };
                     return None;
                 }
                 if now.duration_since(last_moving) < self.cfg.quiet {
@@ -200,21 +216,24 @@ mod tests {
         // Now push past the quiet window (measured from the last moving
         // sample at 750ms): this is what actually stops it.
         let stopped_at = t0 + Duration::from_millis(4800);
-        assert!(matches!(d.observe(stopped_at, false), Some(MotionKind::Stopped { .. })));
+        assert!(matches!(
+            d.observe(stopped_at, false),
+            Some(MotionKind::Stopped { .. })
+        ));
 
         // Immediately moving again: sustain elapses, but cooldown (3s) is
         // still active, so no second Started yet.
         let restart_t0 = stopped_at;
         d.observe(restart_t0, true);
-        assert_eq!(d.observe(restart_t0 + Duration::from_millis(750), true), None);
+        assert_eq!(
+            d.observe(restart_t0 + Duration::from_millis(750), true),
+            None
+        );
 
         // Once cooldown has elapsed, continued motion promotes immediately
         // (no need to wait out another full sustain window).
         let after_cooldown = restart_t0 + Duration::from_millis(3100);
-        assert_eq!(
-            d.observe(after_cooldown, true),
-            Some(MotionKind::Started)
-        );
+        assert_eq!(d.observe(after_cooldown, true), Some(MotionKind::Started));
     }
 
     #[test]

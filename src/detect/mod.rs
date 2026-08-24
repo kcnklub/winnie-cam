@@ -52,9 +52,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
+use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tract_onnx::prelude::{IntoTValue, Tensor};
@@ -223,7 +223,12 @@ pub fn spawn_all(
     let (detect_hub, detect) = spawn(detect_cfg, hub.clone(), shutdown.clone());
     let motion_cfg = motion::MotionConfig::from_config(cfg);
     let (motion_hub, motion) = motion::spawn(motion_cfg, hub, detect_hub.clone(), shutdown);
-    Ok(Some(Handles { detect_hub, motion_hub, detect, motion }))
+    Ok(Some(Handles {
+        detect_hub,
+        motion_hub,
+        detect,
+        motion,
+    }))
 }
 
 /// Async side: throttles and coalesces frames from the [`FrameHub`], and
@@ -374,7 +379,12 @@ fn run_one_pass(
         lb.fill_tensor(rgb, tensor.as_slice_mut::<f32>()?);
     }
 
-    let model_boxes = model::infer(plan, scratch.clone().into_tvalue(), PERSON_CLASS, cfg.threshold)?;
+    let model_boxes = model::infer(
+        plan,
+        scratch.clone().into_tvalue(),
+        PERSON_CLASS,
+        cfg.threshold,
+    )?;
     let suppressed = nms::nms(model_boxes, cfg.iou, 50);
 
     // Map each surviving box from model-input pixels back to source-frame
@@ -385,7 +395,13 @@ fn run_one_pass(
         .map(|b| {
             let (x1, y1) = lb.to_source(b.x1, b.y1);
             let (x2, y2) = lb.to_source(b.x2, b.y2);
-            nms::BBox { x1, y1, x2, y2, score: b.score }
+            nms::BBox {
+                x1,
+                y1,
+                x2,
+                y2,
+                score: b.score,
+            }
         })
         .collect();
 

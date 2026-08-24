@@ -1,4 +1,6 @@
 /target
 /models/
 frontend/dist/
+frontend/dist-dev/
+frontend/dist.trunk-lock
 frontend/target/

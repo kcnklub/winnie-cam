@@ -85,7 +85,10 @@ pub async fn supervise(source: Box<dyn CaptureSource>, hub: FrameHub, shutdown: 
 
 /// Builds the capture source configured by `cfg` and bound to
 /// `video_config` (so it picks up runtime setting changes).
-pub fn build(cfg: &Config, video_config: &Arc<SharedVideoConfig>) -> anyhow::Result<Box<dyn CaptureSource>> {
+pub fn build(
+    cfg: &Config,
+    video_config: &Arc<SharedVideoConfig>,
+) -> anyhow::Result<Box<dyn CaptureSource>> {
     let kind = match cfg.source {
         SourceKind::Auto => {
             if find_in_path("rpicam-vid").is_some() || find_in_path("libcamera-vid").is_some() {
@@ -105,7 +108,9 @@ pub fn build(cfg: &Config, video_config: &Arc<SharedVideoConfig>) -> anyhow::Res
     };
 
     match kind {
-        SourceKind::Rpicam => Ok(Box::new(rpicam::RpicamCapture::from_config(Arc::clone(video_config))?)),
+        SourceKind::Rpicam => Ok(Box::new(rpicam::RpicamCapture::from_config(Arc::clone(
+            video_config,
+        ))?)),
         SourceKind::V4l2 => Ok(Box::new(
             v4l2::V4l2Capture::from_config(Arc::clone(video_config))
                 .with_device(cfg.device.clone()),
