@@ -1,23 +1,31 @@
+use components::bar::Bar;
+use components::footer::Footer;
+use components::stage::Stage;
+use hooks::use_healthz::use_healthz;
+use hooks::use_mjpeg::use_mjpeg;
 use leptos::prelude::*;
 
-/// Top-level application component. Phase 1 is just a stub to prove the
-/// Leptos + Trunk pipeline works end to end; real components arrive in
-/// Phase 2+.
+mod components;
+mod hooks;
+mod state;
+
+/// Top-level application component.
 #[component]
 pub fn App() -> impl IntoView {
+    let mjpeg = use_mjpeg();
+    let do_reconnect = mjpeg.do_reconnect;
+
+    let healthz = use_healthz({
+        let do_reconnect = do_reconnect;
+        move || do_reconnect.run(())
+    });
+
     view! {
         <div class="app">
-            <header class="bar">
-                <div class="brand">
-                    <svg class="mark" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M15.5 12.5A6 6 0 1 1 11.5 4a4.7 4.7 0 0 0 4 8.5z"/>
-                    </svg>
-                    <span>"Winnie"</span>
-                </div>
-            </header>
-            <p style="text-align: center; color: var(--text-dim);">
-                "Leptos frontend loading..."
-            </p>
+            <Bar connection={mjpeg.connection} />
+            <Stage mjpeg={mjpeg} />
+            // Controls row — placeholder for Phase 6.
+            <Footer healthz={healthz} />
         </div>
     }
 }
