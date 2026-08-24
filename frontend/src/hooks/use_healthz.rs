@@ -29,9 +29,7 @@ pub struct HealthzState {
 ///
 /// When the server is detected as stale or unreachable, the caller should
 /// call the provided reconnect callback to force a fresh MJPEG connection.
-pub fn use_healthz(
-    on_reconnect: impl Fn() + Clone + 'static,
-) -> HealthzState {
+pub fn use_healthz(on_reconnect: impl Fn() + Clone + 'static) -> HealthzState {
     let (last, set_last) = signal(None::<shared_types::HealthzResponse>);
     let (offline, set_offline) = signal(false);
 
@@ -42,7 +40,7 @@ pub fn use_healthz(
     let fps_prev: RwSignal<Option<(u64, f64)>> = RwSignal::new(None);
 
     // Poll every 5 seconds.
-    let _interval = Interval::new(HEALTH_POLL_MS, {
+    let _ = Interval::new(HEALTH_POLL_MS, {
         let on_reconnect = on_reconnect.clone();
         let set_last = set_last;
         let set_offline = set_offline;
@@ -56,22 +54,17 @@ pub fn use_healthz(
                 let zero_frames_since = zero_frames_since;
 
                 async move {
-                    let result = gloo_net::http::Request::get("/healthz")
-                        .send()
-                        .await;
+                    let result = gloo_net::http::Request::get("/healthz").send().await;
 
                     match result {
                         Ok(resp) => {
-                            match resp.json::<shared_types::HealthzResponse>().await
-                            {
+                            match resp.json::<shared_types::HealthzResponse>().await {
                                 Ok(data) => {
                                     set_offline.set(false);
                                     set_last.set(Some(data.clone()));
 
                                     // Stale detection triggers reconnect.
-                                    if let Some(since) =
-                                        data.seconds_since_last_frame
-                                    {
+                                    if let Some(since) = data.seconds_since_last_frame {
                                         if since > STALE_AFTER_SECS {
                                             on_reconnect();
                                         }
@@ -79,10 +72,7 @@ pub fn use_healthz(
 
                                     // Track zero-frames window.
                                     if data.frames_captured == 0 {
-                                        if zero_frames_since
-                                            .get_untracked()
-                                            .is_none()
-                                        {
+                                        if zero_frames_since.get_untracked().is_none() {
                                             zero_frames_since.set(Some(
                                                 window()
                                                     .performance()
@@ -106,7 +96,8 @@ pub fn use_healthz(
                 }
             });
         }
-    });
+    })
+    .forget();
 
     // Force an immediate poll (the interval above fires after 5s; we want
     // data right away).
