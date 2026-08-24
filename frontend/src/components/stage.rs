@@ -13,11 +13,9 @@ pub fn Stage(mjpeg: UseMjpegReturn) -> impl IntoView {
     let on_load = mjpeg.on_load;
     let on_error = mjpeg.on_error;
 
-    let feed_hidden =
-        Memo::new(move |_| connection.get() != ConnectionState::Live);
-    let placeholder_hidden = Memo::new(move |_| {
-        connection.get() == ConnectionState::Live && had_frames.get()
-    });
+    let feed_hidden = Memo::new(move |_| connection.get() != ConnectionState::Live);
+    let placeholder_hidden =
+        Memo::new(move |_| connection.get() == ConnectionState::Live && had_frames.get());
 
     let ph = Memo::new(move |_| placeholder.get());
 

@@ -1,10 +1,7 @@
-use gloo_timers::callback::Interval;
 use leptos::prelude::*;
 
-const HEALTH_POLL_MS: u32 = 5000;
 const STALE_AFTER_SECS: f64 = 6.0;
 const NO_FRAMES_TIMEOUT_MS: u64 = 15_000;
-
 /// Bundle of reactive signals driven by periodic `/healthz` polling.
 pub struct HealthzState {
     /// Raw response from the last successful poll. `None` means no poll has
@@ -30,9 +27,7 @@ pub struct HealthzState {
 ///
 /// When the server is detected as stale or unreachable, the caller should
 /// call the provided reconnect callback to force a fresh MJPEG connection.
-pub fn use_healthz(
-    on_reconnect: impl Fn() + Clone + 'static,
-) -> HealthzState {
+pub fn use_healthz(on_reconnect: impl Fn() + Clone + 'static) -> HealthzState {
     let (last, set_last) = signal(None::<shared_types::HealthzResponse>);
     let (offline, set_offline) = signal(false);
 
@@ -41,73 +36,6 @@ pub fn use_healthz(
 
     // FPS computation state: (prev_frames, prev_timestamp)
     let fps_prev: RwSignal<Option<(u64, f64)>> = RwSignal::new(None);
-
-    // Poll every 5 seconds.
-    let _interval = Interval::new(HEALTH_POLL_MS, {
-        let on_reconnect = on_reconnect.clone();
-        let set_last = set_last;
-        let set_offline = set_offline;
-        let zero_frames_since = zero_frames_since;
-
-        move || {
-            wasm_bindgen_futures::spawn_local({
-                let on_reconnect = on_reconnect.clone();
-                let set_last = set_last;
-                let set_offline = set_offline;
-                let zero_frames_since = zero_frames_since;
-
-                async move {
-                    let result = gloo_net::http::Request::get("/healthz")
-                        .send()
-                        .await;
-
-                    match result {
-                        Ok(resp) => {
-                            match resp.json::<shared_types::HealthzResponse>().await
-                            {
-                                Ok(data) => {
-                                    set_offline.set(false);
-                                    set_last.set(Some(data.clone()));
-
-                                    // Stale detection triggers reconnect.
-                                    if let Some(since) =
-                                        data.seconds_since_last_frame
-                                    {
-                                        if since > STALE_AFTER_SECS {
-                                            on_reconnect();
-                                        }
-                                    }
-
-                                    // Track zero-frames window.
-                                    if data.frames_captured == 0 {
-                                        if zero_frames_since
-                                            .get_untracked()
-                                            .is_none()
-                                        {
-                                            zero_frames_since.set(Some(
-                                                window()
-                                                    .performance()
-                                                    .map(|p| p.now())
-                                                    .unwrap_or(0.0),
-                                            ));
-                                        }
-                                    } else {
-                                        zero_frames_since.set(None);
-                                    }
-                                }
-                                Err(_) => {
-                                    set_offline.set(true);
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            set_offline.set(true);
-                        }
-                    }
-                }
-            });
-        }
-    });
 
     // Force an immediate poll (the interval above fires after 5s; we want
     // data right away).
@@ -118,25 +46,18 @@ pub fn use_healthz(
         let _zero_frames_since = zero_frames_since;
 
         async move {
-            let result = gloo_net::http::Request::get("/healthz")
-                .send()
-                .await;
+            let result = gloo_net::http::Request::get("/healthz").send().await;
 
             match result {
-                Ok(resp) => {
-                    match resp
-                        .json::<shared_types::HealthzResponse>()
-                        .await
-                    {
-                        Ok(data) => {
-                            set_offline.set(false);
-                            set_last.set(Some(data));
-                        }
-                        Err(_) => {
-                            set_offline.set(true);
-                        }
+                Ok(resp) => match resp.json::<shared_types::HealthzResponse>().await {
+                    Ok(data) => {
+                        set_offline.set(false);
+                        set_last.set(Some(data));
                     }
-                }
+                    Err(_) => {
+                        set_offline.set(true);
+                    }
+                },
                 Err(_) => {
                     set_offline.set(true);
                 }
@@ -198,15 +119,11 @@ pub fn use_healthz(
             .unwrap_or(false)
     });
 
-    let detect_available = Memo::new(move |_| {
-        last.get().map(|d| d.detect == "ready").unwrap_or(false)
-    });
+    let detect_available =
+        Memo::new(move |_| last.get().map(|d| d.detect == "ready").unwrap_or(false));
 
-    let motion_active = Memo::new(move |_| {
-        last.get()
-            .map(|d| d.motion == "active")
-            .unwrap_or(false)
-    });
+    let motion_active =
+        Memo::new(move |_| last.get().map(|d| d.motion == "active").unwrap_or(false));
 
     HealthzState {
         last: last.into(),
@@ -221,10 +138,6 @@ pub fn use_healthz(
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
-
-fn window() -> web_sys::Window {
-    web_sys::window().expect("no window in browser")
-}
 
 fn fmt_since(uptime_secs: f64) -> String {
     if uptime_secs < 60.0 {

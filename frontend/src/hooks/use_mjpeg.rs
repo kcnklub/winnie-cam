@@ -54,8 +54,7 @@ pub fn use_mjpeg() -> UseMjpegReturn {
             let new_src = format!("/stream.mjpeg?ts={}", ts_seed.get_untracked());
             let img_src = img_src;
             wasm_bindgen_futures::spawn_local(async move {
-                gloo_timers::future::TimeoutFuture::new(RECONNECT_DELAY_MS)
-                    .await;
+                gloo_timers::future::TimeoutFuture::new(RECONNECT_DELAY_MS).await;
                 img_src.set(new_src);
             });
         })
@@ -80,16 +79,11 @@ pub fn use_mjpeg() -> UseMjpegReturn {
                 let nh = img.natural_height();
                 if nw > 0 && nh > 0 {
                     if let Some(parent) = img.parent_element() {
-                        let html_parent: &web_sys::HtmlElement =
-                            parent.unchecked_ref();
-                        let style =
-                            web_sys::HtmlElement::style(html_parent);
-                        let _ = style
-                            .set_property("--ar", &format!("{nw} / {nh}"));
-                        let _ = style.set_property(
-                            "--ar-num",
-                            &format!("{}", nw as f64 / nh as f64),
-                        );
+                        let html_parent: &web_sys::HtmlElement = parent.unchecked_ref();
+                        let style = web_sys::HtmlElement::style(html_parent);
+                        let _ = style.set_property("--ar", &format!("{nw} / {nh}"));
+                        let _ =
+                            style.set_property("--ar-num", &format!("{}", nw as f64 / nh as f64));
                     }
                 }
             }
