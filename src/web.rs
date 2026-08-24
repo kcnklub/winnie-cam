@@ -19,7 +19,9 @@ use bytes::Bytes;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{SharedVideoConfig, SourceKind, VideoSettingsUpdate};
+use shared_types::{ErrorResponse, HealthzResponse, VideoSettingsUpdate};
+
+use crate::config::{SharedVideoConfig, SourceKind};
 use crate::detect::hub::DetectionHub;
 use crate::detect::motion::hub::MotionHub;
 use crate::hub::FrameHub;
@@ -117,22 +119,12 @@ async fn snapshot(State(hub): State<FrameHub>) -> Response {
 
 async fn healthz(State(state): State<AppState>) -> Response {
     let stats = state.hub.stats();
-    let since_last_frame = match stats.since_last_frame {
-        Some(d) => d.as_secs_f64().to_string(),
-        None => "null".to_string(),
-    };
 
     let (detect_state, detect_ms, detect_since) = match &state.detect {
-        None => ("off".to_string(), "null".to_string(), "null".to_string()),
+        None => ("off".to_string(), None, None),
         Some(det_hub) => {
-            let ms = match det_hub.last_inference_ms() {
-                Some(ms) => ms.to_string(),
-                None => "null".to_string(),
-            };
-            let since = match det_hub.seconds_since_last_pass() {
-                Some(s) => s.to_string(),
-                None => "null".to_string(),
-            };
+            let ms = det_hub.last_inference_ms().map(|ms| ms as f64);
+            let since = det_hub.seconds_since_last_pass();
             (det_hub.state().as_str().to_string(), ms, since)
         }
     };
@@ -142,21 +134,23 @@ async fn healthz(State(state): State<AppState>) -> Response {
         Some(motion_hub) => (motion_hub.state().as_str().to_string(), motion_hub.event_count()),
     };
 
-    let body = format!(
-        "{{\"uptime_secs\":{},\"frames_captured\":{},\"subscribers\":{},\
-         \"seconds_since_last_frame\":{},\"detect\":\"{}\",\"detect_ms\":{},\
-         \"seconds_since_last_detection\":{},\"motion\":\"{}\",\"motion_events\":{}}}",
-        stats.uptime.as_secs(),
-        stats.frames_captured,
-        state.viewers.load(Ordering::Relaxed),
-        since_last_frame,
-        detect_state,
+    let body = HealthzResponse {
+        uptime_secs: stats.uptime.as_secs_f64(),
+        frames_captured: stats.frames_captured,
+        subscribers: state.viewers.load(Ordering::Relaxed) as u64,
+        seconds_since_last_frame: stats.since_last_frame.map(|d| d.as_secs_f64()),
+        detect: detect_state,
         detect_ms,
-        detect_since,
-        motion_state,
+        seconds_since_last_detection: detect_since,
+        motion: motion_state,
         motion_events,
-    );
-    ([(header::CONTENT_TYPE, "application/json")], body).into_response()
+    };
+
+    (
+        [(header::CONTENT_TYPE, "application/json")],
+        serde_json::to_string(&body).expect("HealthzResponse serialization is infallible"),
+    )
+        .into_response()
 }
 
 /// RAII pair for `viewers`: incrementing (and logging "connected") happens
@@ -267,10 +261,13 @@ impl Drop for DetectDisconnectLog {
 
 async fn detections(State(state): State<AppState>) -> Response {
     let Some(det_hub) = state.detect.clone() else {
+        let body =
+            serde_json::to_string(&ErrorResponse { error: "detection is not enabled".into() })
+                .expect("ErrorResponse serialization is infallible");
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             [(header::CONTENT_TYPE, "application/json")],
-            "{\"error\":\"detection is not enabled\"}",
+            body,
         )
             .into_response();
     };
@@ -338,10 +335,13 @@ impl Drop for MotionDisconnectLog {
 /// new event as it's published.
 async fn events(State(state): State<AppState>) -> Response {
     let Some(motion_hub) = state.motion.clone() else {
+        let body =
+            serde_json::to_string(&ErrorResponse { error: "detection is not enabled".into() })
+                .expect("ErrorResponse serialization is infallible");
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             [(header::CONTENT_TYPE, "application/json")],
-            "{\"error\":\"detection is not enabled\"}",
+            body,
         )
             .into_response();
     };
@@ -386,10 +386,13 @@ async fn events(State(state): State<AppState>) -> Response {
 /// holding an SSE connection open.
 async fn events_json(State(state): State<AppState>) -> Response {
     let Some(motion_hub) = state.motion.clone() else {
+        let body =
+            serde_json::to_string(&ErrorResponse { error: "detection is not enabled".into() })
+                .expect("ErrorResponse serialization is infallible");
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             [(header::CONTENT_TYPE, "application/json")],
-            "{\"error\":\"detection is not enabled\"}",
+            body,
         )
             .into_response();
     };
@@ -428,7 +431,9 @@ async fn update_config(
     Json(update): Json<VideoSettingsUpdate>,
 ) -> Response {
     if let Err(msg) = update.validate() {
-        let body = serde_json::json!({"error": msg}).to_string();
+        let body =
+            serde_json::to_string(&ErrorResponse { error: msg })
+                .expect("ErrorResponse serialization is infallible");
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
             [(header::CONTENT_TYPE, "application/json")],

@@ -3,7 +3,7 @@ mod config;
 mod detect;
 mod hub;
 mod jpeg;
-mod json;
+
 mod web;
 
 use std::sync::Arc;
