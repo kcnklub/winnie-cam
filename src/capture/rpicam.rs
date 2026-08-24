@@ -17,7 +17,7 @@ use std::pin::Pin;
 use std::process::Stdio;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
@@ -44,7 +44,10 @@ pub struct RpicamCapture {
 impl RpicamCapture {
     pub fn from_config(video_config: Arc<SharedVideoConfig>) -> anyhow::Result<Self> {
         let settings = video_config.settings.read().unwrap();
-        anyhow::ensure!(settings.width > 0 && settings.height > 0, "width/height must be > 0");
+        anyhow::ensure!(
+            settings.width > 0 && settings.height > 0,
+            "width/height must be > 0"
+        );
         anyhow::ensure!(settings.fps > 0, "fps must be > 0");
         drop(settings);
 
@@ -53,7 +56,10 @@ impl RpicamCapture {
             .or_else(|| super::find_in_path("libcamera-vid").map(|_| "libcamera-vid".to_string()))
             .unwrap_or_else(|| "rpicam-vid".to_string());
 
-        Ok(Self { binary, video_config })
+        Ok(Self {
+            binary,
+            video_config,
+        })
     }
 
     /// Populate `cmd` with the arguments for the current settings, so both

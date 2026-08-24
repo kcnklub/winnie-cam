@@ -1,0 +1,395 @@
+  :root {
+    color-scheme: dark;
+    --bg:          #14101a;
+    --bg-elev:     #1c1722;
+    --surface:     #221c29;
+    --surface-hi:  #2b2431;
+    --stage-bg:    #0d0a11;
+    --line:        #2f2735;
+
+    --text:        #efe6dd;
+    --text-dim:    #b3a79f;
+    --text-faint:  #7d7280;
+
+    --accent:      #f0b072;
+    --accent-hi:   #ffc98d;
+    --accent-wash: rgba(240, 176, 114, .16);
+
+    --ok:          #8fbf9f;
+    --ok-wash:     rgba(143, 191, 159, .28);
+    --warn:        #e0a86a;
+    --warn-wash:   rgba(224, 168, 106, .24);
+    --bad:         #d98b84;
+    --focus:       var(--accent);
+
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --fs-xs: .75rem; --fs-sm: .8125rem; --fs-md: .9375rem; --fs-lg: 1.0625rem; --fs-xl: 1.25rem;
+    --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+    --r-sm: 10px; --r-md: 14px; --r-lg: 20px; --r-full: 999px;
+    --shadow-card: 0 1px 2px rgba(0,0,0,.55), 0 16px 40px -12px rgba(0,0,0,.7);
+    --dim: 1;
+  }
+
+  /* Manual override wins in both directions; system preference only applies
+     when no override is set (:not([data-theme="dark"]) lets the dark
+     override fall through to :root's own dark tokens above). */
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg:#f6f1ea; --bg-elev:#fffaf4; --surface:#efe7dc; --surface-hi:#e6dcd0;
+    --stage-bg:#1a1520; --line:#ddd2c4;
+    --text:#2a2229; --text-dim:#5f5560; --text-faint:#8a7f88;
+    --accent:#b06d2a; --accent-hi:#8f551d; --accent-wash:rgba(176,109,42,.14);
+    --ok:#4a7c5c; --ok-wash:rgba(74,124,92,.20);
+    --warn:#a06a1f; --warn-wash:rgba(160,106,31,.18); --bad:#a4453d;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      color-scheme: light;
+      --bg:#f6f1ea; --bg-elev:#fffaf4; --surface:#efe7dc; --surface-hi:#e6dcd0;
+      --stage-bg:#1a1520; --line:#ddd2c4;
+      --text:#2a2229; --text-dim:#5f5560; --text-faint:#8a7f88;
+      --accent:#b06d2a; --accent-hi:#8f551d; --accent-wash:rgba(176,109,42,.14);
+      --ok:#4a7c5c; --ok-wash:rgba(74,124,92,.20);
+      --warn:#a06a1f; --warn-wash:rgba(160,106,31,.18); --bad:#a4453d;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  /* The UA's default `[hidden]{display:none}` rule loses to ANY author
+     `display` declaration (e.g. .btn's `display:inline-flex`), so without
+     !important here, elements toggled via the `hidden` DOM property would
+     stay visible whenever a more specific rule also sets `display`. */
+  [hidden] { display: none !important; }
+
+  html, body { margin: 0; }
+  body {
+    min-height: 100dvh;
+    background: var(--bg);
+    color: var(--text);
+    font: var(--fs-md) / 1.45 var(--font);
+    display: grid;
+    place-items: center;
+    padding: max(var(--sp-4), env(safe-area-inset-top)) var(--sp-4)
+             max(var(--sp-4), env(safe-area-inset-bottom));
+  }
+
+  .app {
+    width: 100%;
+    max-width: 720px;
+    display: grid;
+    gap: var(--sp-3);
+    --chrome-h: 210px;
+    filter: brightness(var(--dim, 1));
+    transition: filter .25s ease;
+  }
+
+  .bar { display: flex; align-items: center; justify-content: space-between; padding: 0 2px; }
+  .brand { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-lg); font-weight: 600; letter-spacing: -.01em; }
+  .brand .mark { color: var(--accent); }
+
+  .status {
+    margin: 0; display: inline-flex; align-items: center; gap: var(--sp-2);
+    padding: 6px 12px; border-radius: var(--r-full);
+    background: var(--surface); color: var(--text-dim);
+    font-size: var(--fs-sm); line-height: 1.4;
+    transition: opacity .3s ease, background .2s ease, color .2s ease;
+  }
+  .status.is-live { opacity: .65; }
+
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%; flex: none;
+    background: var(--text-faint);
+    transition: background .2s ease, box-shadow .2s ease;
+  }
+  #status.is-live .dot { background: var(--ok); box-shadow: 0 0 0 4px var(--ok-wash); }
+  #status.is-wait .dot { background: var(--warn); animation: pulse 1.6s ease-in-out infinite; }
+  #status.is-bad  .dot { background: var(--bad); }
+  .btn.on .dot { background: var(--ok); box-shadow: 0 0 0 4px var(--ok-wash); }
+
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+
+  /* No transform/scale/zoom may be applied to .stage or anything between it
+     and #feed: getBoundingClientRect() reports post-transform pixels while
+     an absolutely-positioned child's left/top are pre-transform local
+     pixels, so a transform anywhere in this chain would silently desync the
+     detection overlay from the video. Animate opacity instead of scale for
+     any entry transition here. */
+  .stage {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    aspect-ratio: var(--ar, 16 / 9);
+    width: min(100%, calc((100dvh - var(--chrome-h)) * var(--ar-num, 1.7778)));
+    margin-inline: auto;
+    border-radius: var(--r-lg);
+    background: var(--stage-bg);
+    box-shadow: var(--shadow-card), inset 0 0 0 1px var(--line);
+  }
+  .stage:fullscreen, .stage:-webkit-full-screen, body.immersive .stage {
+    width: 100vw; height: 100dvh; max-width: none; aspect-ratio: auto;
+    border-radius: 0; box-shadow: none; background: #000;
+    filter: brightness(var(--dim, 1)); /* top-layer fullscreen doesn't inherit .app's filter */
+  }
+  body.immersive .stage { position: fixed; inset: 0; z-index: 100; }
+  body.immersive .bar, body.immersive .controls, body.immersive .stats, body.immersive .motion-panel,
+  body.immersive .settings-panel, body.immersive .settings-panel-status {
+    display: none;
+  }
+
+  #feed { display: block; width: 100%; height: 100%; object-fit: contain; background: var(--stage-bg); }
+  #overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
+
+  .placeholder {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: var(--sp-2); text-align: center; padding: var(--sp-5);
+    color: var(--text-dim);
+  }
+  .placeholder svg { color: var(--text-faint); margin-bottom: var(--sp-2); }
+  .ph-title { margin: 0; font-size: var(--fs-lg); color: var(--text); font-weight: 600; }
+  .ph-sub { margin: 0; font-size: var(--fs-sm); color: var(--text-dim); max-width: 32ch; }
+
+  .stage-btn {
+    position: absolute; top: var(--sp-3); right: var(--sp-3);
+    display: grid; place-items: center; width: 40px; height: 40px;
+    border: 0; border-radius: var(--r-full);
+    background: rgba(10, 8, 13, .55); color: #efe6dd;
+    backdrop-filter: blur(4px); cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+
+  .controls { display: flex; gap: var(--sp-2); }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-2);
+    min-height: 44px; padding: 0 var(--sp-4); border: 0; border-radius: var(--r-md);
+    background: var(--surface); color: var(--text); font: inherit; font-size: var(--fs-sm); font-weight: 600;
+    text-decoration: none; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    transition: background .15s ease, color .15s ease, opacity .15s ease;
+  }
+  .btn:hover { background: var(--surface-hi); }
+  .btn.on { background: var(--accent-wash); color: var(--accent-hi); }
+  .btn-wide { flex: 1 1 0; }
+  .btn-icon { flex: 0 0 44px; padding: 0; }
+  .btn[aria-disabled="true"] { opacity: .4; pointer-events: none; }
+  .btn[aria-pressed="true"] { background: var(--accent-wash); color: var(--accent-hi); }
+
+  .stats {
+    display: flex; align-items: center; flex-wrap: wrap;
+    padding: 0 2px; font-size: var(--fs-xs); color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .stat + .stat::before { content: '\00b7'; color: var(--text-faint); margin: 0 var(--sp-2); }
+  .ghost {
+    margin-left: auto; border: 0; background: transparent; color: var(--text-faint); cursor: pointer;
+    display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r-full);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ghost:hover { color: var(--text-dim); background: var(--surface); }
+
+  /* Motion rides the same footer stat row as presence, but as a button: it
+     expands/collapses .motion-panel below. Amber, not red/green - "moving"
+     isn't an error state the way a lost stream is, so it shouldn't borrow
+     #status's red/green vocabulary (kept from the original activity panel's
+     design intent). */
+  .motion-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 0; background: transparent; padding: 0; margin: 0;
+    color: inherit; font: inherit; font-size: var(--fs-xs); cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .motion-btn .dot { background: var(--text-faint); }
+  .motion-btn.active { color: var(--warn); }
+  .motion-btn.active .dot {
+    background: var(--warn);
+    box-shadow: 0 0 0 4px var(--warn-wash);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+
+  .motion-panel {
+    background: var(--surface);
+    border-radius: var(--r-md);
+    padding: var(--sp-3) var(--sp-4);
+    box-shadow: var(--shadow-card);
+  }
+  .motion-panel-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: var(--sp-2);
+  }
+  .motion-panel-title {
+    margin: 0; font-size: var(--fs-xs); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint);
+  }
+  .motion-total { font-size: var(--fs-xs); color: var(--text-faint); font-variant-numeric: tabular-nums; }
+  #motion-list {
+    list-style: none; margin: 0; padding: 0;
+    display: flex; flex-direction: column; gap: var(--sp-1);
+    max-height: 160px; overflow-y: auto;
+    font-size: var(--fs-sm); color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  #motion-list li.motion-empty { color: var(--text-faint); font-style: italic; }
+
+  /* Mute toggle lives in the activity panel's head rather than the main
+     control bar - it's only relevant once you're already looking at motion,
+     and keeps the control bar from growing a button most sessions won't
+     touch. */
+  .alert-sound-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 24px; height: 24px; margin-left: var(--sp-2);
+    border: 0; border-radius: var(--r-full); background: transparent;
+    color: var(--text-faint); cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .alert-sound-btn:hover { color: var(--text-dim); background: var(--surface-hi); }
+  .alert-sound-btn[aria-pressed="true"] { color: var(--warn); }
+
+  /* The alert lives inside .stage (not the footer) so it survives fullscreen
+     and the iOS .immersive fallback, both of which hide .bar/.controls/.stats
+     (see body.immersive above) but not .stage's own children. Pinned to the
+     bottom - the top-right corner is already #exit-immersive's spot. Only
+     opacity is animated: no transform may touch .stage or anything between
+     it and #feed without desyncing the detection overlay (see the .stage
+     comment above). */
+  .motion-alert {
+    position: absolute; left: var(--sp-3); right: var(--sp-3); bottom: var(--sp-3);
+    z-index: 2;
+    display: flex; align-items: center; gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-4);
+    border-radius: var(--r-md);
+    background: var(--surface); box-shadow: var(--shadow-card), inset 0 0 0 1px var(--warn-wash);
+    backdrop-filter: blur(4px);
+    animation: alert-in .2s ease-out;
+  }
+  @keyframes alert-in { from { opacity: 0; } to { opacity: 1; } }
+  .motion-alert-dot {
+    flex: none; width: 10px; height: 10px; border-radius: var(--r-full);
+    background: var(--warn); box-shadow: 0 0 0 4px var(--warn-wash);
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  .motion-alert-text {
+    flex: 1; margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--text);
+  }
+  .motion-alert-btn {
+    flex: none; min-height: 36px; padding: 0 var(--sp-4); border: 0; border-radius: var(--r-md);
+    background: var(--warn); color: var(--bg); font: inherit; font-size: var(--fs-sm); font-weight: 700;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .motion-alert-btn:hover { background: var(--accent-hi); }
+  /* Mirrors .alert-sound-btn but lives on the banner itself, not just the
+     activity panel's head - body.immersive hides .motion-panel (see above),
+     so without a copy here the mute control would be unreachable exactly
+     when the banner is likely to be up: fullscreen, at night. */
+  .motion-alert-mute {
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border: 0; border-radius: var(--r-full);
+    background: transparent; color: var(--text-dim); cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .motion-alert-mute:hover { background: var(--surface-hi); }
+  .motion-alert-mute[aria-pressed="true"] { color: var(--warn); }
+
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  :focus:not(:focus-visible) { outline: none; }
+
+  /* ── Settings panel ────────────────────────────────────────────────── */
+
+  .settings-panel {
+    background: var(--surface);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-card), inset 0 0 0 1px var(--line);
+    overflow: hidden;
+    animation: settings-in .25s ease-out;
+  }
+  @keyframes settings-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+
+  .settings-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding: var(--sp-3) var(--sp-4) var(--sp-2);
+  }
+  .settings-title {
+    margin: 0; font-size: var(--fs-xs); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint);
+  }
+  .settings-tag {
+    font-size: var(--fs-xs); color: var(--text-faint);
+    padding: 2px 8px; border-radius: var(--r-full);
+    background: var(--bg-elev); border: 1px solid var(--line);
+  }
+
+  .settings-body {
+    display: flex; flex-direction: column; gap: var(--sp-2);
+    padding: 0 var(--sp-4) var(--sp-3);
+  }
+  .settings-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: var(--sp-3); min-height: 40px;
+  }
+  .settings-label {
+    font-size: var(--fs-sm); font-weight: 500; color: var(--text-dim);
+    flex: none; width: 100px;
+  }
+  .settings-input-group { display: flex; align-items: center; gap: var(--sp-1); flex: 1; }
+  .settings-select {
+    flex: 1; min-height: 38px; padding: 0 var(--sp-3);
+    border: 0; border-radius: var(--r-sm);
+    background: var(--surface-hi); color: var(--text);
+    font: inherit; font-size: var(--fs-sm);
+    cursor: pointer;
+  }
+  .settings-num {
+    flex: 1; min-height: 38px; padding: 0 var(--sp-3);
+    border: 0; border-radius: var(--r-sm);
+    background: var(--surface-hi); color: var(--text);
+    font: inherit; font-size: var(--fs-sm);
+  }
+  .settings-num:focus, .settings-select:focus { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+  .settings-range-wrap { display: flex; align-items: center; gap: var(--sp-3); flex: 1; }
+  .settings-range {
+    flex: 1; height: 6px;
+    appearance: none; -webkit-appearance: none;
+    background: var(--surface-hi); border-radius: var(--r-full);
+    accent-color: var(--accent);
+  }
+  .settings-range::-webkit-slider-thumb {
+    appearance: none; -webkit-appearance: none;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: var(--accent); cursor: pointer;
+  }
+  .settings-range-out {
+    font-size: var(--fs-sm); font-weight: 600; font-variant-numeric: tabular-nums;
+    color: var(--text); min-width: 3ch; text-align: right;
+  }
+
+  .settings-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 52px; min-height: 36px; padding: 0 var(--sp-3);
+    border: 0; border-radius: var(--r-sm);
+    background: var(--surface-hi); color: var(--text-dim);
+    font: inherit; font-size: var(--fs-sm); font-weight: 600;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+    transition: background .15s ease, color .15s ease;
+  }
+  .settings-toggle[aria-pressed="true"] { background: var(--accent-wash); color: var(--accent-hi); }
+
+  .settings-actions {
+    display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-2);
+    padding: var(--sp-2) var(--sp-4) var(--sp-4);
+  }
+  .settings-error {
+    flex: 1; font-size: var(--fs-xs); color: var(--bad);
+  }
+
+  .settings-panel-status {
+    text-align: center; font-size: var(--fs-sm); color: var(--ok);
+    padding: var(--sp-2);
+  }
+
+  /* ── End settings panel ────────────────────────────────────────────── */
+
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
+      animation-duration: .01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important;
+    }
+  }

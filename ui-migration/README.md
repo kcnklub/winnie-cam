@@ -102,4 +102,6 @@ checklist assumes all previous phases are complete.
   which is already in the Axum ecosystem.
 - **Trunk** is the build tool. `trunk build --release` produces `dist/`.
   Development uses `trunk serve --proxy-backend=http://127.0.0.1:8080` so
-  API calls proxy to the running Axum server.
+  API calls proxy to the running Axum server. **Pin trunk to `0.21.5`** —
+  later releases (0.21.6 through the 0.22.0 betas) panic on root proxying
+  after their axum 0.8 upgrade.

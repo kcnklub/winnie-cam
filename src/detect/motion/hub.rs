@@ -18,8 +18,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::broadcast;
 
-use shared_types::{clamp_fraction, MotionEvent as WireMotionEvent, MotionSnapshot};
 use super::detector::MotionKind;
+use shared_types::{MotionEvent as WireMotionEvent, MotionSnapshot, clamp_fraction};
 
 /// How many past events `/events.json` and a freshly-connected `/events`
 /// client can see. Generous enough to cover "what happened while I wasn't
@@ -85,7 +85,10 @@ impl MotionHub {
         Self {
             inner: Arc::new(Inner {
                 tx,
-                ring: Mutex::new(Ring { seq: 0, events: VecDeque::with_capacity(RING_CAPACITY) }),
+                ring: Mutex::new(Ring {
+                    seq: 0,
+                    events: VecDeque::with_capacity(RING_CAPACITY),
+                }),
                 state: AtomicU8::new(0),
             }),
         }
@@ -117,7 +120,12 @@ impl MotionHub {
         let event = {
             let mut ring = self.inner.ring.lock().expect("motion ring lock");
             ring.seq += 1;
-            let event = Arc::new(MotionEvent { seq: ring.seq, kind, at_unix_ms, score });
+            let event = Arc::new(MotionEvent {
+                seq: ring.seq,
+                kind,
+                at_unix_ms,
+                score,
+            });
             ring.events.push_back(event.clone());
             if ring.events.len() > RING_CAPACITY {
                 ring.events.pop_front();
@@ -148,7 +156,14 @@ impl MotionHub {
 
     /// The ring buffer's current contents, oldest first.
     pub fn recent(&self) -> Vec<Arc<MotionEvent>> {
-        self.inner.ring.lock().expect("motion ring lock").events.iter().cloned().collect()
+        self.inner
+            .ring
+            .lock()
+            .expect("motion ring lock")
+            .events
+            .iter()
+            .cloned()
+            .collect()
     }
 
     /// `/events.json`'s body: the ring buffer, oldest first, as a single
@@ -264,7 +279,12 @@ mod tests {
 
     #[test]
     fn a_non_finite_score_never_reaches_the_wire() {
-        let e = MotionEvent { seq: 1, kind: MotionKind::Started, at_unix_ms: 0, score: f32::NAN };
+        let e = MotionEvent {
+            seq: 1,
+            kind: MotionKind::Started,
+            at_unix_ms: 0,
+            score: f32::NAN,
+        };
         let json = event_json(&e);
         assert!(!json.contains("NaN"), "{json}");
         assert!(!json.contains("inf"), "{json}");

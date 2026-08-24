@@ -11,7 +11,8 @@ crate will depend on `shared-types`.
 ## Prerequisites
 
 - [ ] Phase 0 complete (`shared-types` crate exists, backend uses it)
-- [ ] Trunk installed: `cargo install trunk`
+- [ ] Trunk installed, **pinned to `0.21.5`**: `cargo install trunk@0.21.5 --locked`
+  (trunk `0.21.6`+ panics on root proxying — see `frontend/README.md`)
 - [ ] `wasm32-unknown-unknown` target installed:
   `rustup target add wasm32-unknown-unknown`
 
@@ -144,7 +145,7 @@ crate will depend on `shared-types`.
 - [ ] Document the full build command in `frontend/README.md`:
   ```markdown
   # Development
-  cd frontend && trunk serve --proxy-backend=http://127.0.0.1:8080
+  cd frontend && trunk serve --port 8081 --proxy-backend=http://127.0.0.1:8080
 
   # Production
   cd frontend && trunk build --release
@@ -152,7 +153,7 @@ crate will depend on `shared-types`.
 - [ ] Consider a `Justfile` or shell script at repo root:
   ```makefile
   dev:
-      cargo run --release & sleep 2 && cd frontend && trunk serve --proxy-backend=http://127.0.0.1:8080
+      cargo run --release & sleep 2 && cd frontend && trunk serve --port 8081 --proxy-backend=http://127.0.0.1:8080
 
   build:
       cd frontend && trunk build --release
@@ -171,4 +172,4 @@ crate will depend on `shared-types`.
 - [ ] CSS loads and applies (fonts, colors match the old UI)
 - [ ] Verify on a phone/tablet on the LAN that the old UI at `/` still
   works as before
-- [ ] Trunk dev mode: `cd frontend && trunk serve --proxy-backend=http://127.0.0.1:8080` — visit `http://localhost:8081` — app auto-reloads on source changes
+- [ ] Trunk dev mode: `cd frontend && trunk serve --port 8081 --proxy-backend=http://127.0.0.1:8080` — visit `http://localhost:8081` — app auto-reloads on source changes

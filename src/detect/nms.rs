@@ -53,7 +53,13 @@ mod tests {
     use super::*;
 
     fn bbox(x1: f32, y1: f32, x2: f32, y2: f32, score: f32) -> BBox {
-        BBox { x1, y1, x2, y2, score }
+        BBox {
+            x1,
+            y1,
+            x2,
+            y2,
+            score,
+        }
     }
 
     #[test]
@@ -104,10 +110,7 @@ mod tests {
     fn overlap_below_the_threshold_is_kept() {
         // iou here is 1/3 (see the test above). A 0.5 threshold tolerates
         // more overlap than that, so both boxes survive.
-        let boxes = vec![
-            bbox(0.0, 0.0, 1.0, 1.0, 0.9),
-            bbox(0.5, 0.0, 1.5, 1.0, 0.8),
-        ];
+        let boxes = vec![bbox(0.0, 0.0, 1.0, 1.0, 0.9), bbox(0.5, 0.0, 1.5, 1.0, 0.8)];
         assert_eq!(nms(boxes, 0.5, 10).len(), 2);
     }
 
@@ -115,10 +118,7 @@ mod tests {
     fn overlap_above_the_threshold_is_suppressed() {
         // Same pair, same 1/3 iou - a 0.1 threshold is stricter than the
         // overlap, so only the higher-scoring box should survive.
-        let boxes = vec![
-            bbox(0.0, 0.0, 1.0, 1.0, 0.9),
-            bbox(0.5, 0.0, 1.5, 1.0, 0.8),
-        ];
+        let boxes = vec![bbox(0.0, 0.0, 1.0, 1.0, 0.9), bbox(0.5, 0.0, 1.5, 1.0, 0.8)];
         let kept = nms(boxes, 0.1, 10);
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].score, 0.9);

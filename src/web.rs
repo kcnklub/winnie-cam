@@ -18,6 +18,7 @@ use axum::routing::get;
 use bytes::Bytes;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
+use tower_http::services::ServeDir;
 
 use shared_types::{ErrorResponse, HealthzResponse, VideoSettingsUpdate};
 
@@ -99,6 +100,7 @@ pub fn router(state: AppState) -> Router {
         .route("/events", get(events))
         .route("/events.json", get(events_json))
         .route("/api/config", get(get_config).put(update_config))
+        .nest_service("/v2", ServeDir::new("frontend/dist"))
         .with_state(state)
 }
 
@@ -131,7 +133,10 @@ async fn healthz(State(state): State<AppState>) -> Response {
 
     let (motion_state, motion_events) = match &state.motion {
         None => ("off".to_string(), 0),
-        Some(motion_hub) => (motion_hub.state().as_str().to_string(), motion_hub.event_count()),
+        Some(motion_hub) => (
+            motion_hub.state().as_str().to_string(),
+            motion_hub.event_count(),
+        ),
     };
 
     let body = HealthzResponse {
@@ -177,7 +182,10 @@ impl DisconnectLog {
 
 impl Drop for DisconnectLog {
     fn drop(&mut self) {
-        let remaining = self.viewers.fetch_sub(1, Ordering::Relaxed).saturating_sub(1);
+        let remaining = self
+            .viewers
+            .fetch_sub(1, Ordering::Relaxed)
+            .saturating_sub(1);
         tracing::info!(subscribers = remaining, "viewer disconnected");
     }
 }
@@ -261,9 +269,10 @@ impl Drop for DetectDisconnectLog {
 
 async fn detections(State(state): State<AppState>) -> Response {
     let Some(det_hub) = state.detect.clone() else {
-        let body =
-            serde_json::to_string(&ErrorResponse { error: "detection is not enabled".into() })
-                .expect("ErrorResponse serialization is infallible");
+        let body = serde_json::to_string(&ErrorResponse {
+            error: "detection is not enabled".into(),
+        })
+        .expect("ErrorResponse serialization is infallible");
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             [(header::CONTENT_TYPE, "application/json")],
@@ -273,7 +282,10 @@ async fn detections(State(state): State<AppState>) -> Response {
     };
 
     let mut rx = det_hub.subscribe();
-    tracing::info!(subscribers = det_hub.subscriber_count(), "overlay connected");
+    tracing::info!(
+        subscribers = det_hub.subscriber_count(),
+        "overlay connected"
+    );
     let shutdown = state.shutdown.clone();
 
     let stream = async_stream::stream! {
@@ -335,9 +347,10 @@ impl Drop for MotionDisconnectLog {
 /// new event as it's published.
 async fn events(State(state): State<AppState>) -> Response {
     let Some(motion_hub) = state.motion.clone() else {
-        let body =
-            serde_json::to_string(&ErrorResponse { error: "detection is not enabled".into() })
-                .expect("ErrorResponse serialization is infallible");
+        let body = serde_json::to_string(&ErrorResponse {
+            error: "detection is not enabled".into(),
+        })
+        .expect("ErrorResponse serialization is infallible");
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             [(header::CONTENT_TYPE, "application/json")],
@@ -347,7 +360,10 @@ async fn events(State(state): State<AppState>) -> Response {
     };
 
     let mut rx = motion_hub.subscribe();
-    tracing::info!(subscribers = motion_hub.subscriber_count(), "events viewer connected");
+    tracing::info!(
+        subscribers = motion_hub.subscriber_count(),
+        "events viewer connected"
+    );
     let shutdown = state.shutdown.clone();
 
     let stream = async_stream::stream! {
@@ -386,9 +402,10 @@ async fn events(State(state): State<AppState>) -> Response {
 /// holding an SSE connection open.
 async fn events_json(State(state): State<AppState>) -> Response {
     let Some(motion_hub) = state.motion.clone() else {
-        let body =
-            serde_json::to_string(&ErrorResponse { error: "detection is not enabled".into() })
-                .expect("ErrorResponse serialization is infallible");
+        let body = serde_json::to_string(&ErrorResponse {
+            error: "detection is not enabled".into(),
+        })
+        .expect("ErrorResponse serialization is infallible");
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             [(header::CONTENT_TYPE, "application/json")],
@@ -431,9 +448,8 @@ async fn update_config(
     Json(update): Json<VideoSettingsUpdate>,
 ) -> Response {
     if let Err(msg) = update.validate() {
-        let body =
-            serde_json::to_string(&ErrorResponse { error: msg })
-                .expect("ErrorResponse serialization is infallible");
+        let body = serde_json::to_string(&ErrorResponse { error: msg })
+            .expect("ErrorResponse serialization is infallible");
         return (
             StatusCode::UNPROCESSABLE_ENTITY,
             [(header::CONTENT_TYPE, "application/json")],

@@ -175,9 +175,9 @@ fn scan_entropy_data(buf: &[u8], sos_pos: usize) -> Option<ScanResult> {
             return None;
         }
         match buf[i + 1] {
-            0x00 => i += 2,             // byte-stuffed literal 0xFF
-            0xD0..=0xD7 => i += 2,      // restart marker, part of the scan
-            0xFF => i += 1,             // fill byte, real marker follows
+            0x00 => i += 2,        // byte-stuffed literal 0xFF
+            0xD0..=0xD7 => i += 2, // restart marker, part of the scan
+            0xFF => i += 1,        // fill byte, real marker follows
             0xD9 => return Some(ScanResult::Frame(i + 2)),
             _ => return Some(ScanResult::Resync), // e.g. a truncated frame followed by a new SOI
         }
