@@ -182,8 +182,7 @@ impl Default for DetectionHub {
 /// [`DetectionHub::new`] before any real pass has run. Hardcoded rather
 /// than built with serde at runtime because `const` evaluation can't
 /// allocate a `String` or call non-`const` functions.
-const EMPTY_DETECTION_JSON: &str =
-    r#"{"w":0,"h":0,"seq":0,"ms":0.0,"dets":[]}"#;
+const EMPTY_DETECTION_JSON: &str = r#"{"w":0,"h":0,"seq":0,"ms":0.0,"dets":[]}"#;
 
 /// Builds a [`DetectionPayload`] from source-frame-pixel boxes, normalizing
 /// every coordinate to 0..1 fractions so the browser never needs to know
