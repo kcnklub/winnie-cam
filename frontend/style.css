@@ -102,9 +102,9 @@
     background: var(--text-faint);
     transition: background .2s ease, box-shadow .2s ease;
   }
-  #status.is-live .dot { background: var(--ok); box-shadow: 0 0 0 4px var(--ok-wash); }
-  #status.is-wait .dot { background: var(--warn); animation: pulse 1.6s ease-in-out infinite; }
-  #status.is-bad  .dot { background: var(--bad); }
+  .status.is-live .dot { background: var(--ok); box-shadow: 0 0 0 4px var(--ok-wash); }
+  .status.is-wait .dot { background: var(--warn); animation: pulse 1.6s ease-in-out infinite; }
+  .status.is-bad  .dot { background: var(--bad); }
   .btn.on .dot { background: var(--ok); box-shadow: 0 0 0 4px var(--ok-wash); }
 
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
@@ -220,14 +220,14 @@
     text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint);
   }
   .motion-total { font-size: var(--fs-xs); color: var(--text-faint); font-variant-numeric: tabular-nums; }
-  #motion-list {
+  .motion-list {
     list-style: none; margin: 0; padding: 0;
     display: flex; flex-direction: column; gap: var(--sp-1);
     max-height: 160px; overflow-y: auto;
     font-size: var(--fs-sm); color: var(--text-dim);
     font-variant-numeric: tabular-nums;
   }
-  #motion-list li.motion-empty { color: var(--text-faint); font-style: italic; }
+  .motion-list li.motion-empty { color: var(--text-faint); font-style: italic; }
 
   /* Mute toggle lives in the activity panel's head rather than the main
      control bar - it's only relevant once you're already looking at motion,
