@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 
-use shared_types::{clamp_coord, clamp_fraction, DetectionBox, DetectionPayload};
 use crate::detect::nms::BBox;
+use shared_types::{DetectionBox, DetectionPayload, clamp_coord, clamp_fraction};
 
 /// Lifecycle state, surfaced on `/healthz` so the frontend knows whether to
 /// show the overlay toggle at all.
@@ -86,7 +86,7 @@ impl DetectionHub {
     pub fn new() -> Self {
         let (tx, _) = watch::channel(Arc::new(DetectionFrame {
             seq: 0,
-            json: empty_json(),
+            json: EMPTY_DETECTION_JSON.to_string(),
             inference_ms: 0.0,
             src_w: 0,
             src_h: 0,
@@ -178,10 +178,12 @@ impl Default for DetectionHub {
     }
 }
 
-fn empty_json() -> String {
-    let payload = DetectionPayload { w: 0, h: 0, seq: 0, ms: 0.0, dets: vec![] };
-    serde_json::to_string(&payload).expect("DetectionPayload serialization is infallible")
-}
+/// Pre-serialized empty detection payload — the placeholder published by
+/// [`DetectionHub::new`] before any real pass has run. Hardcoded rather
+/// than built with serde at runtime because `const` evaluation can't
+/// allocate a `String` or call non-`const` functions.
+const EMPTY_DETECTION_JSON: &str =
+    r#"{"w":0,"h":0,"seq":0,"ms":0.0,"dets":[]}"#;
 
 /// Builds a [`DetectionPayload`] from source-frame-pixel boxes, normalizing
 /// every coordinate to 0..1 fractions so the browser never needs to know
@@ -227,14 +229,19 @@ mod tests {
     use super::*;
 
     fn bbox(x1: f32, y1: f32, x2: f32, y2: f32, score: f32) -> BBox {
-        BBox { x1, y1, x2, y2, score }
+        BBox {
+            x1,
+            y1,
+            x2,
+            y2,
+            score,
+        }
     }
 
     #[test]
     fn serializes_an_empty_detection_list() {
         let json = detections_json(1280, 720, 1, 12.5, &[]);
-        let v: serde_json::Value =
-            serde_json::from_str(&json).expect("valid JSON");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         assert_eq!(v["w"], serde_json::json!(1280));
         assert_eq!(v["h"], serde_json::json!(720));
         assert_eq!(v["seq"], serde_json::json!(1));
@@ -247,8 +254,7 @@ mod tests {
         // 320-wide box at x=32 in a 1280-wide frame -> x=0.025, w=0.25.
         let boxes = [bbox(32.0, 36.0, 352.0, 108.0, 0.876_54)];
         let json = detections_json(1280, 720, 7, 100.0, &boxes);
-        let v: serde_json::Value =
-            serde_json::from_str(&json).expect("valid JSON");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         let det = &v["dets"][0];
         assert!((det["x"].as_f64().unwrap() - 0.025).abs() < 0.001);
         assert!((det["y"].as_f64().unwrap() - 0.05).abs() < 0.001);
@@ -266,14 +272,18 @@ mod tests {
         // first (this fix) must report w=250/1280.
         let boxes = [bbox(-50.0, 0.0, 250.0, 100.0, 0.9)];
         let json = detections_json(1280, 720, 1, 1.0, &boxes);
-        let v: serde_json::Value =
-            serde_json::from_str(&json).expect("valid JSON");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         let det = &v["dets"][0];
-        assert!((det["x"].as_f64().unwrap() - 0.0).abs() < 0.001, "x should be ~0, got {}", det["x"]);
+        assert!(
+            (det["x"].as_f64().unwrap() - 0.0).abs() < 0.001,
+            "x should be ~0, got {}",
+            det["x"]
+        );
         let expected_w = 250.0 / 1280.0;
         assert!(
             (det["w"].as_f64().unwrap() - expected_w).abs() < 0.001,
-            "w should be ~{expected_w}, got {}", det["w"]
+            "w should be ~{expected_w}, got {}",
+            det["w"]
         );
     }
 
@@ -284,15 +294,20 @@ mod tests {
             bbox(-500.0, -500.0, 5000.0, 5000.0, 2.0),
         ];
         let json = detections_json(1280, 720, 1, f32::NAN, &boxes);
-        assert!(!json.contains("NaN"), "must not emit the literal NaN: {json}");
+        assert!(
+            !json.contains("NaN"),
+            "must not emit the literal NaN: {json}"
+        );
         assert!(!json.contains("inf"), "must not emit inf/Infinity: {json}");
         // Parse and check every box field is in [0, 1].
-        let v: serde_json::Value =
-            serde_json::from_str(&json).expect("valid JSON");
+        let v: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
         for det in v["dets"].as_array().unwrap() {
             for key in &["x", "y", "w", "h", "score"] {
                 let val = det[key].as_f64().unwrap();
-                assert!((0.0..=1.0).contains(&val), "{key}={val} out of range in {json}");
+                assert!(
+                    (0.0..=1.0).contains(&val),
+                    "{key}={val} out of range in {json}"
+                );
             }
         }
     }
