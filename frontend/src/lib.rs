@@ -1,8 +1,11 @@
 use components::bar::Bar;
 use components::controls::DetectToggle;
 use components::footer::Footer;
+use components::motion_alert::MotionAlert;
+use components::motion_panel::MotionPanel;
 use components::stage::Stage;
 use hooks::use_detections::use_detections;
+use hooks::use_events::use_events;
 use hooks::use_healthz::use_healthz;
 use hooks::use_mjpeg::use_mjpeg;
 use hooks::use_overlay::use_overlay;
@@ -12,6 +15,7 @@ use leptos::prelude::*;
 mod components;
 mod hooks;
 mod state;
+pub mod utils;
 
 /// Top-level application component.
 #[component]
@@ -34,6 +38,11 @@ pub fn App() -> impl IntoView {
 
     // ── Detection + overlay ──────────────────────────────────────────
     let det = use_detections(detect_available);
+
+    // ── Motion events ──────────────────────────────────────────────
+    // Tied to detection: events SSE opens/closes with the detect toggle.
+    let motion = use_events(det.is_open.read_only());
+    let motion_panel_expanded: RwSignal<bool> = RwSignal::new(false);
 
     use_overlay(canvas_ref, img_ref, stage_ref, det.latest_payload);
 
@@ -62,7 +71,14 @@ pub fn App() -> impl IntoView {
                 canvas_ref={canvas_ref}
                 img_ref={img_ref}
                 stage_ref={stage_ref}
-            />
+            >
+                <MotionAlert
+                    alert_active={motion.alert_active}
+                    alert_time_text={motion.alert_time_text}
+                    sound_on={motion.sound_on}
+                    toggle_sound={motion.toggle_sound}
+                />
+            </Stage>
             <div class="controls">
                 <DetectToggle
                     available={detect_available.into()}
@@ -70,7 +86,14 @@ pub fn App() -> impl IntoView {
                     on_toggle={det.toggle}
                 />
             </div>
-            <Footer healthz={healthz} presence_text={presence_text} />
+            <Footer
+                healthz={healthz}
+                presence_text={presence_text}
+                motion_is_moving={motion.is_moving}
+                motion_panel_expanded={motion_panel_expanded}
+                detect_available={detect_available}
+            />
+            <MotionPanel motion={motion} expanded={motion_panel_expanded} available={detect_available} />
         </div>
     }
 }

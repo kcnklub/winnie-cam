@@ -4,7 +4,8 @@ use leptos::html::{Canvas, Div, Img};
 use leptos::prelude::*;
 
 /// Video stage: the MJPEG `<img>`, a placeholder overlay, the detection
-/// canvas, an exit-immersive button, and (later) a motion alert.
+/// canvas, an exit-immersive button, and a slot for children (motion alert
+/// banner) that must live inside `.stage` to survive fullscreen/immersive.
 ///
 /// `NodeRef` props are created by the parent (`App`) and passed through so
 /// the overlay hook can use them; `Stage` only assigns them to DOM elements.
@@ -14,6 +15,7 @@ pub fn Stage(
     canvas_ref: NodeRef<Canvas>,
     img_ref: NodeRef<Img>,
     stage_ref: NodeRef<Div>,
+    #[prop(optional)] children: Option<leptos::prelude::Children>,
 ) -> impl IntoView {
     let connection = mjpeg.connection;
     let had_frames = mjpeg.had_frames;
@@ -82,6 +84,7 @@ pub fn Stage(
                     <path d="M6 6l12 12M18 6L6 18"/>
                 </svg>
             </button>
+            {children.map(|c| c())}
         </div>
     }
 }

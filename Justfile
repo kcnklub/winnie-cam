@@ -72,8 +72,6 @@ dev: check-trunk
     fi
 
     cd frontend
-    # Use a separate dist dir so `trunk serve` doesn't overwrite the
-    # production `frontend/dist/` that `just build` / `just serve` rely on.
     trunk serve --dist dist-dev --port 8081 --proxy-backend=http://127.0.0.1:8080
 
 # Run backend only (serves the prebuilt frontend/dist/ at /v2)

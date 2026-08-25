@@ -1,0 +1,28 @@
+# Dev-server proxy rules for `just dev` (`trunk serve`).
+#
+# These MUST be per-endpoint. A single root proxy
+# (`--proxy-backend=http://127.0.0.1:8080`) mounts at "/" and shadows trunk's
+# own static file service entirely: every request, including "/" and the
+# hashed .js/.wasm/.css assets, is forwarded to the backend. The page you get
+# is then the backend's legacy inline-HTML index (src/web.rs `index`), so
+# nothing you change in frontend/src/ ever shows up.
+#
+# Only `trunk serve` reads these; `trunk build` ignores them, so production
+# (backend serving frontend/dist at /v2) is unaffected. Keep this list in sync
+# with the backend paths the frontend calls.
+
+# Health/status polling (use_healthz.rs).
+[[proxy]]
+backend = "http://127.0.0.1:8080/healthz"
+
+# Detection SSE stream (use_detections.rs).
+[[proxy]]
+backend = "http://127.0.0.1:8080/detections"
+
+# Motion event SSE stream (use_events.rs).
+[[proxy]]
+backend = "http://127.0.0.1:8080/events"
+
+# Long-lived multipart MJPEG stream (use_mjpeg.rs).
+[[proxy]]
+backend = "http://127.0.0.1:8080/stream.mjpeg"
