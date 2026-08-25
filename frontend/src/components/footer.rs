@@ -1,10 +1,13 @@
 use crate::hooks::use_healthz::HealthzState;
 use leptos::prelude::*;
 
-/// Footer row: uptime stat, FPS, viewer count, and a theme-toggle
-/// placeholder button.
+/// Footer row: uptime stat, FPS, viewer count, presence stat, and a
+/// theme-toggle placeholder button.
 #[component]
-pub fn Footer(healthz: HealthzState) -> impl IntoView {
+pub fn Footer(
+    healthz: HealthzState,
+    #[prop(optional)] presence_text: Option<Memo<String>>,
+) -> impl IntoView {
     view! {
         <footer class="stats">
             <span class="stat">{move || healthz.since_text.get()}</span>
@@ -12,6 +15,21 @@ pub fn Footer(healthz: HealthzState) -> impl IntoView {
                 {move || healthz.fps_text.get()}
             </span>
             <span class="stat">{move || healthz.viewers_text.get()}</span>
+            {move || {
+                presence_text.as_ref().map(|m| {
+                    let text = m.get();
+                    let is_empty = text.is_empty();
+                    view! {
+                        <span
+                            class="stat"
+                            id="stat-presence"
+                            hidden={is_empty}
+                        >
+                            {text}
+                        </span>
+                    }
+                })
+            }}
             // Theme toggle — placeholder shell for Phase 6.
             <button
                 class="ghost"
