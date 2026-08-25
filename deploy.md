@@ -5,12 +5,12 @@ it there, and running it as a systemd service. This assumes the plain
 Raspberry Pi OS (Bookworm or later) with SSH already enabled, and covers the
 initial deploy plus how to push later updates.
 
-Throughout, replace `pi@raspberrypi.local` with your actual user@host. If
+Throughout, replace `kymiller@winnie.local` with your actual user@host. If
 you'll be running these commands more than once, it's worth exporting it
 once per shell session:
 
 ```bash
-export PI_HOST=pi@raspberrypi.local
+export PI_HOST=kymiller@winnie.local
 ```
 
 ## 1. One-time Pi setup
@@ -123,15 +123,15 @@ Before wiring up systemd, run it in the foreground once to confirm the
 camera actually works end-to-end:
 
 ```bash
-ssh -t "$PI_HOST" '~/winnie-cam/target/release/winnie-cam --width 1280 --height 720 --fps 15'
+ssh -t "$PI_HOST" '~/winnie-cam/target/release/winnie-cam --source rpicam --width 1280 --height 720 --fps 15 --bind 0.0.0.0:80'
 ```
 
 Leave that running, and from another machine on the LAN, open
-`http://<pi-hostname>.local:8080` (or `http://<pi-ip>:8080`) in a browser -
+`http://winnie.local` (or `http://<pi-ip>`) in a browser -
 you should see the live feed. Check `/healthz` too:
 
 ```bash
-curl http://raspberrypi.local:8080/healthz
+curl http://winnie.local/healthz
 ```
 
 `seconds_since_last_frame` should stay near zero. Once you've confirmed it
@@ -147,27 +147,22 @@ This is what makes it a real baby monitor rather than a terminal window you
 have to remember to leave open: it starts on boot and restarts itself if it
 crashes or the Pi loses power briefly.
 
-First, edit `deploy/winnie-cam.service` (locally, then re-sync, or directly
-on the Pi) so `ExecStart` matches your actual username and any flags you
-need:
+The service file at `deploy/winnie-cam.service` is already set up for
+user `kymiller` with detection enabled. Edit it (locally, then re-sync,
+or directly on the Pi) if your username or flags differ:
 
 ```ini
-ExecStart=/home/pi/winnie-cam/target/release/winnie-cam --width 1280 --height 720 --fps 15 --hflip
-```
-
-With detection enabled, add `--detect` and `--model`:
-
-```ini
-ExecStart=/home/pi/winnie-cam/target/release/winnie-cam --width 1280 --height 720 --fps 15 --hflip \
-  --detect --model /home/pi/winnie-cam/models/yolov8n.onnx
+ExecStart=/home/kymiller/winnie-cam/target/release/winnie-cam --source rpicam --width 1280 --height 720 --fps 15 --bind 0.0.0.0:80 \
+  --detect --model /home/kymiller/winnie-cam/models/yolov8n.onnx \
+  --detect-threshold 0.10
 ```
 
 No changes to the unit's hardening are needed for this: `ProtectHome=read-only`
 makes `/home` read-only, not inaccessible, so the process can still read the
 model file from there - it just can't write anywhere under it.
 
-(The `User=pi` / `Group=pi` lines in the unit need to match too, if your Pi
-user isn't literally named `pi`.)
+(The `User=kymiller` / `Group=kymiller` lines in the unit need to match too, if your Pi
+user isn't literally named `kymiller`.)
 
 Then install it:
 
@@ -183,7 +178,7 @@ Confirm it's up:
 
 ```bash
 ssh "$PI_HOST" systemctl status winnie-cam
-curl http://raspberrypi.local:8080/healthz
+curl http://winnie.local/healthz
 ```
 
 ### Useful commands going forward
@@ -230,7 +225,7 @@ doing it often.
   open - most likely a leftover foreground smoke-test process from step 4,
   or `rpicam-hello` left running. `sudo systemctl stop winnie-cam` before
   running any manual camera command, and vice versa.
-- **Can't reach `http://<host>.local:8080` from another device**: try the
+- **Can't reach `http://winnie.local` from another device**: try the
   Pi's IP address directly (`hostname -I` on the Pi) - `.local` resolution
   depends on mDNS/avahi working on both ends, which some routers or client
   devices don't support well.
@@ -246,7 +241,7 @@ doing it often.
   broadcasts never reached it, which points at the AP, not at winnie-cam.
 - **Permission denied opening `/dev/video0`**: the user running the service
   isn't in the `video` group yet, or hasn't re-logged-in since being added
-  (see step 1). Check with `groups pi`.
+  (see step 1). Check with `groups kymiller`.
 - **`unsupported operator` or the process exits right after "loading
   detection model" when using `--detect`**: `tract` couldn't compile the
   ONNX graph - almost always means the model wasn't exported the way this

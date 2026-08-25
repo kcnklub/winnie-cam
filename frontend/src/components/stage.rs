@@ -1,11 +1,20 @@
 use crate::hooks::use_mjpeg::UseMjpegReturn;
 use crate::state::ConnectionState;
+use leptos::html::{Canvas, Div, Img};
 use leptos::prelude::*;
 
-/// Video stage: the MJPEG `<img>`, a placeholder overlay, an exit-
-/// immersive button, and (later) canvas + motion alert.
+/// Video stage: the MJPEG `<img>`, a placeholder overlay, the detection
+/// canvas, an exit-immersive button, and (later) a motion alert.
+///
+/// `NodeRef` props are created by the parent (`App`) and passed through so
+/// the overlay hook can use them; `Stage` only assigns them to DOM elements.
 #[component]
-pub fn Stage(mjpeg: UseMjpegReturn) -> impl IntoView {
+pub fn Stage(
+    mjpeg: UseMjpegReturn,
+    canvas_ref: NodeRef<Canvas>,
+    img_ref: NodeRef<Img>,
+    stage_ref: NodeRef<Div>,
+) -> impl IntoView {
     let connection = mjpeg.connection;
     let had_frames = mjpeg.had_frames;
     let placeholder = mjpeg.placeholder;
@@ -15,21 +24,29 @@ pub fn Stage(mjpeg: UseMjpegReturn) -> impl IntoView {
 
     let feed_hidden = Memo::new(move |_| connection.get() != ConnectionState::Live);
     let placeholder_hidden =
-        Memo::new(move |_| connection.get() == ConnectionState::Live && had_frames.get());
+        Memo::new(move |_| {
+            connection.get() == ConnectionState::Live && had_frames.get()
+        });
 
     let ph = Memo::new(move |_| placeholder.get());
 
     view! {
-        <div class="stage" id="stage">
+        <div class="stage" id="stage" node_ref={stage_ref}>
             <img
                 id="feed"
                 src={img_src}
+                node_ref={img_ref}
                 on:load={move |ev| on_load.run(ev)}
                 on:error={move |ev| on_error.run(ev.into())}
                 alt="Live view of Winnie's room"
                 hidden={feed_hidden}
             />
-            <canvas id="overlay" aria-hidden="true" hidden></canvas>
+            <canvas
+                id="overlay"
+                aria-hidden="true"
+                node_ref={canvas_ref}
+                hidden
+            ></canvas>
             <div class="placeholder" hidden={placeholder_hidden}>
                 <svg
                     width="56"

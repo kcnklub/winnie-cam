@@ -18,6 +18,7 @@ web-sys = { version = "0.3", features = [
   "HtmlElement",
   "HtmlImageElement",
   "HtmlCanvasElement",
+  "HtmlDivElement",
   "CanvasRenderingContext2d",
   "EventSource",
   "EventSourceInit",
@@ -30,6 +31,8 @@ web-sys = { version = "0.3", features = [
   "DomRect",
   "DomRectReadOnly",
   "Performance",
+  "Storage",
+  "CssStyleDeclaration",
 ] }
 gloo-net = "0.6"
 gloo-timers = { version = "0.3", features = ["futures"] }
