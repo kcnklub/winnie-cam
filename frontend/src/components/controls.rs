@@ -9,10 +9,13 @@ pub fn DetectToggle(
     is_open: RwSignal<bool>,
     on_toggle: Callback<(), ()>,
 ) -> impl IntoView {
-    let btn_class =
-        Memo::new(move |_| {
-            if is_open.get() { "btn btn-wide on" } else { "btn btn-wide" }
-        });
+    let btn_class = Memo::new(move |_| {
+        if is_open.get() {
+            "btn btn-wide on"
+        } else {
+            "btn btn-wide"
+        }
+    });
 
     let on_click = {
         let on_toggle = on_toggle;

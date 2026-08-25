@@ -35,12 +35,7 @@ pub fn App() -> impl IntoView {
     // ── Detection + overlay ──────────────────────────────────────────
     let det = use_detections(detect_available);
 
-    use_overlay(
-        canvas_ref,
-        img_ref,
-        stage_ref,
-        det.latest_payload,
-    );
+    use_overlay(canvas_ref, img_ref, stage_ref, det.latest_payload);
 
     // ── Presence text ────────────────────────────────────────────────
     let presence_text: Memo<String> = Memo::new(move |_| {

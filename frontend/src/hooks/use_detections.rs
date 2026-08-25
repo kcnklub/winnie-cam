@@ -5,8 +5,8 @@
 use gloo_timers::callback::Interval;
 use leptos::prelude::*;
 use shared_types::DetectionPayload;
-use wasm_bindgen::prelude::Closure;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::Closure;
 
 /// Stale timeout: if no detection message arrives for this many ms, clear
 /// the overlay so a phantom box never sits over live video.
@@ -27,12 +27,9 @@ pub struct UseDetectionsReturn {
 }
 
 /// Reactive detection SSE lifecycle.
-pub fn use_detections(
-    detect_available: Memo<bool>,
-) -> UseDetectionsReturn {
+pub fn use_detections(detect_available: Memo<bool>) -> UseDetectionsReturn {
     let is_open = RwSignal::new(false);
-    let (latest_payload, set_latest_payload) =
-        signal(None::<DetectionPayload>);
+    let (latest_payload, set_latest_payload) = signal(None::<DetectionPayload>);
 
     // Bookkeeping for stale detection.
     let last_payload_at: RwSignal<f64> = RwSignal::new(0.0);
@@ -70,20 +67,14 @@ pub fn use_detections(
             let onmessage_cb = {
                 let set_latest_payload = set_latest_payload;
                 let last_payload_at = last_payload_at;
-                Closure::wrap(
-                    Box::new(move |event: web_sys::MessageEvent| {
-                        if let Some(data) = event.data().as_string() {
-                            if let Ok(payload) =
-                                serde_json::from_str::<DetectionPayload>(&data)
-                            {
-                                set_latest_payload.set(Some(payload));
-                                last_payload_at
-                                    .set(js_sys::Date::now() as f64);
-                            }
+                Closure::wrap(Box::new(move |event: web_sys::MessageEvent| {
+                    if let Some(data) = event.data().as_string() {
+                        if let Ok(payload) = serde_json::from_str::<DetectionPayload>(&data) {
+                            set_latest_payload.set(Some(payload));
+                            last_payload_at.set(js_sys::Date::now() as f64);
                         }
-                    })
-                        as Box<dyn FnMut(web_sys::MessageEvent)>,
-                )
+                    }
+                }) as Box<dyn FnMut(web_sys::MessageEvent)>)
             };
 
             source.set_onmessage(Some(onmessage_cb.as_ref().unchecked_ref()));
@@ -91,14 +82,11 @@ pub fn use_detections(
 
             let onerror_cb = {
                 let set_latest_payload = set_latest_payload;
-                Closure::wrap(
-                    Box::new(move |_event: web_sys::Event| {
-                        set_latest_payload.set(None);
-                    }) as Box<dyn FnMut(web_sys::Event)>,
-                )
+                Closure::wrap(Box::new(move |_event: web_sys::Event| {
+                    set_latest_payload.set(None);
+                }) as Box<dyn FnMut(web_sys::Event)>)
             };
-            source
-                .set_onerror(Some(onerror_cb.as_ref().unchecked_ref()));
+            source.set_onerror(Some(onerror_cb.as_ref().unchecked_ref()));
             onerror_cb.forget();
 
             es.set(Some(source));
@@ -146,24 +134,19 @@ pub fn use_detections(
         let open_es = open_es.clone();
         let close_es = close_es.clone();
 
-        let cb = Closure::wrap(
-            Box::new(move || {
-                let doc = document();
-                if doc.hidden() {
-                    if is_open.get_untracked() {
-                        close_es();
-                    }
-                } else if is_open.get_untracked() {
-                    open_es();
+        let cb = Closure::wrap(Box::new(move || {
+            let doc = document();
+            if doc.hidden() {
+                if is_open.get_untracked() {
+                    close_es();
                 }
-            }) as Box<dyn FnMut()>,
-        );
+            } else if is_open.get_untracked() {
+                open_es();
+            }
+        }) as Box<dyn FnMut()>);
 
         document()
-            .add_event_listener_with_callback(
-                "visibilitychange",
-                cb.as_ref().unchecked_ref(),
-            )
+            .add_event_listener_with_callback("visibilitychange", cb.as_ref().unchecked_ref())
             .expect("visibilitychange listener should register");
 
         cb.forget();
@@ -175,10 +158,7 @@ pub fn use_detections(
         let set_latest_payload = set_latest_payload;
         Interval::new(STALE_CHECK_MS, move || {
             let last = last_payload_at.get_untracked();
-            if last > 0.0
-                && (js_sys::Date::now() as f64 - last)
-                    > DETECTION_STALE_MS as f64
-            {
+            if last > 0.0 && (js_sys::Date::now() as f64 - last) > DETECTION_STALE_MS as f64 {
                 set_latest_payload.set(None);
             }
         })
@@ -217,13 +197,12 @@ fn document() -> web_sys::Document {
 }
 
 fn try_persist(value: &str) {
-    let _ = web_sys::window()
-        .and_then(|w| {
-            w.local_storage()
-                .ok()
-                .flatten()
-                .map(|storage| storage.set_item("winnie-detect", value))
-        });
+    let _ = web_sys::window().and_then(|w| {
+        w.local_storage()
+            .ok()
+            .flatten()
+            .map(|storage| storage.set_item("winnie-detect", value))
+    });
 }
 
 fn try_restore() -> bool {
