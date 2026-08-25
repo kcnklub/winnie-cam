@@ -46,7 +46,7 @@ dev: check-trunk
     # (cargo run would background *cargo*, not the server, and leave an orphan
     # holding :8080 if the shell dies.)
     cargo build --release -p winnie-cam
-    ./target/release/winnie-cam &
+    ./target/release/winnie-cam --detect --model models/yolov8n.onnx &
     backend=$!
     cleanup() {
         kill "$backend" 2>/dev/null || true
@@ -78,7 +78,7 @@ dev: check-trunk
 
 # Run backend only (serves the prebuilt frontend/dist/ at /v2)
 serve:
-    cargo run --release
+    cargo run --release -- --detect --model models/yolov8n.onnx
 
 # Format + lint + test everything
 check:
