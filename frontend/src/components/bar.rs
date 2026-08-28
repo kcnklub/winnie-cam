@@ -28,7 +28,7 @@ pub fn Bar(connection: ReadSignal<ConnectionState>) -> impl IntoView {
                 >
                     <path d="M15.5 12.5A6 6 0 1 1 11.5 4a4.7 4.7 0 0 0 4 8.5z"/>
                 </svg>
-                <span>"Winnie"</span>
+                <span>"Winnie TEST"</span>
             </div>
             <p class={status_class} role="status" aria-live="polite">
                 <span class="dot"></span>
