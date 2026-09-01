@@ -26,3 +26,7 @@ backend = "http://127.0.0.1:8080/events"
 # Long-lived multipart MJPEG stream (use_mjpeg.rs).
 [[proxy]]
 backend = "http://127.0.0.1:8080/stream.mjpeg"
+
+# Long-lived microphone stream (use_audio.rs).
+[[proxy]]
+backend = "http://127.0.0.1:8080/audio"

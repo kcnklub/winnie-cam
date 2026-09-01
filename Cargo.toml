@@ -26,6 +26,11 @@ v4l = "0.14"
 tract-onnx = "0.22"
 zune-jpeg = "0.5"
 
+[dev-dependencies]
+# `test-util` gives the audio supervisor tests a paused clock, so the 5s
+# linger window doesn't have to be waited out for real.
+tokio = { version = "1", features = ["test-util"] }
+
 [[bin]]
 name = "winnie-cam"
 path = "src/main.rs"

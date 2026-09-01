@@ -53,8 +53,7 @@ pub fn use_chime() -> UseChimeReturn {
     // which is required by `Callback::new`.  Wasm is single-threaded so
     // the Mutex never actually contends.
 
-    let audio_ctx: Arc<Mutex<Option<web_sys::AudioContext>>> =
-        Arc::new(Mutex::new(None));
+    let audio_ctx: Arc<Mutex<Option<web_sys::AudioContext>>> = Arc::new(Mutex::new(None));
     let last_chime_at: Arc<Mutex<u64>> = Arc::new(Mutex::new(0));
 
     // ── Helpers ───────────────────────────────────────────────────────
@@ -86,15 +85,9 @@ pub fn use_chime() -> UseChimeReturn {
 
         let doc = document();
         let cb_ref = cb.as_ref().unchecked_ref();
-        let _ = doc.add_event_listener_with_callback_and_bool(
-            "click", cb_ref, true,
-        );
-        let _ = doc.add_event_listener_with_callback_and_bool(
-            "keydown", cb_ref, true,
-        );
-        let _ = doc.add_event_listener_with_callback_and_bool(
-            "touchstart", cb_ref, true,
-        );
+        let _ = doc.add_event_listener_with_callback_and_bool("click", cb_ref, true);
+        let _ = doc.add_event_listener_with_callback_and_bool("keydown", cb_ref, true);
+        let _ = doc.add_event_listener_with_callback_and_bool("touchstart", cb_ref, true);
 
         // Idempotent on re-entrancy — harmless to keep alive forever.
         cb.forget();

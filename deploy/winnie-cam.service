@@ -6,14 +6,22 @@ Wants=network-online.target
 [Service]
 # Adjust the path if you built elsewhere, and add flags as needed
 # (--hflip/--vflip for camera orientation, --width/--height/--fps, ...).
+# --audio needs ffmpeg installed and an --audio-device from `arecord -l`;
+# drop those two flags if there's no microphone attached.
 ExecStart=/home/kymiller/winnie-cam/target/release/winnie-cam --source rpicam --width 1280 --height 720 --fps 15 --bind 0.0.0.0:80 \
   --detect --model /home/kymiller/winnie-cam/models/yolov8n.onnx \
-  --detect-threshold 0.10
+  --detect-threshold 0.10 \
+  --audio --audio-device plughw:1,0
 Restart=always
 RestartSec=5
 User=kymiller
 Group=kymiller
 Environment=RUST_LOG=info
+
+# /dev/snd is group-owned by `audio`, and the ALSA capture device is
+# unreachable without this even though the hardening below leaves /dev alone
+# (no PrivateDevices). Harmless when --audio isn't used.
+SupplementaryGroups=audio
 
 # Hardening: only what's actually needed to open the camera and bind a port.
 NoNewPrivileges=true

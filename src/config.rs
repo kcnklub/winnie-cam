@@ -141,6 +141,36 @@ pub struct Config {
     /// still counts.
     #[arg(long, default_value_t = 0.10)]
     pub motion_box_margin: f32,
+
+    /// Stream microphone audio alongside the video, over `/audio`. Off by
+    /// default, like `--detect`: it needs an ALSA capture device and an
+    /// `ffmpeg` binary that neither the CSI camera nor a bare Pi OS install
+    /// provides. The microphone is only opened while somebody is actually
+    /// listening - see `audio`'s module doc comment.
+    #[arg(long)]
+    pub audio: bool,
+
+    /// ALSA capture device for `--audio`. `default` follows whatever the
+    /// system default is; use `arecord -l` to find an explicit one, which
+    /// is usually what you want with a USB microphone (e.g. `plughw:1,0`).
+    #[arg(long, default_value = "default")]
+    pub audio_device: String,
+
+    /// Microphone sample rate in Hz. Opus resamples internally to 48k, so
+    /// there is little reason to change this.
+    #[arg(long, default_value_t = 48_000)]
+    pub audio_rate: u32,
+
+    /// Encoder bitrate in bits per second. 32k mono Opus is already ample
+    /// for room audio.
+    #[arg(long, default_value_t = 32_000)]
+    pub audio_bitrate: u32,
+
+    /// Container/codec served on `/audio`. `webm-opus` sounds better at the
+    /// same bitrate, but Safari only learned to play Opus-in-WebM in iOS
+    /// 17.4 - switch to `adts-aac` if you watch this from an older iPhone.
+    #[arg(long, value_enum, default_value_t = AudioFormat::WebmOpus)]
+    pub audio_format: AudioFormat,
 }
 
 #[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,6 +178,27 @@ pub enum SourceKind {
     Auto,
     Rpicam,
     V4l2,
+}
+
+/// What `/audio` serves. The choice reaches further than the encoder flags:
+/// WebM is only decodable from its EBML header, so a listener joining an
+/// in-progress stream has to be replayed one, whereas ADTS is self-framing
+/// and can be joined at any frame. See [`crate::audio::webm`].
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AudioFormat {
+    WebmOpus,
+    AdtsAac,
+}
+
+impl AudioFormat {
+    /// The `Content-Type` to serve. `<audio>` dispatches on this, not on the
+    /// request path, which is why both formats can share one route.
+    pub fn content_type(self) -> &'static str {
+        match self {
+            AudioFormat::WebmOpus => "audio/webm",
+            AudioFormat::AdtsAac => "audio/aac",
+        }
+    }
 }
 
 // VideoSettings is now in shared-types; re-exported above.

@@ -27,6 +27,15 @@ pub struct HealthzResponse {
     /// `"off" | "idle" | "active"`.
     pub motion: String,
     pub motion_events: u64,
+    /// `"off" | "idle" | "streaming"`. `"idle"` means audio is enabled but
+    /// nobody is listening, so the microphone subprocess isn't running.
+    pub audio: String,
+    /// `"off" | "webm-opus" | "adts-aac"`. What `/audio` serves, so clients
+    /// can pick a playback strategy (MSE needs container-aware WebM).
+    /// Serialized default keeps newer clients working against older servers.
+    #[serde(default)]
+    pub audio_format: String,
+    pub audio_listeners: u64,
 }
 
 // ── /detections (SSE) ──────────────────────────────────────────────────

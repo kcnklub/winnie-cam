@@ -1,6 +1,7 @@
 //! HTTP layer: the viewer page, the live MJPEG stream, a single-frame
-//! snapshot, a health check, and (when `--detect` is enabled) a live
-//! detection-box stream for the overlay.
+//! snapshot, a health check, (when `--detect` is enabled) a live
+//! detection-box stream for the overlay, and (when `--audio` is enabled) a
+//! live microphone stream.
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -22,7 +23,8 @@ use tower_http::services::ServeDir;
 
 use shared_types::{ErrorResponse, HealthzResponse, VideoSettingsUpdate};
 
-use crate::config::{SharedVideoConfig, SourceKind};
+use crate::audio::hub::AudioHub;
+use crate::config::{AudioFormat, SharedVideoConfig, SourceKind};
 use crate::detect::hub::DetectionHub;
 use crate::detect::motion::hub::MotionHub;
 use crate::hub::FrameHub;
@@ -40,8 +42,13 @@ pub struct AppState {
     /// `None` whenever `detect` is - motion has no separate switch, see
     /// `motion`'s module doc comment.
     pub motion: Option<MotionHub>,
+    /// `None` when the server was started without `--audio`.
+    pub audio: Option<AudioHub>,
     /// Runtime-changeable camera settings shared with the capture backend.
     pub video_config: Arc<SharedVideoConfig>,
+    /// What `/audio` serves. Fixed at startup - unlike the camera settings,
+    /// changing it would break every connected listener's decoder.
+    audio_format: AudioFormat,
     /// Counts browser tabs watching `/stream.mjpeg`, separately from
     /// `FrameHub`'s own broadcast receiver count. Those two used to be the
     /// same number, but once detection exists the detector *also* holds a
@@ -68,14 +75,18 @@ impl AppState {
         hub: FrameHub,
         detect: Option<DetectionHub>,
         motion: Option<MotionHub>,
+        audio: Option<AudioHub>,
         video_config: Arc<SharedVideoConfig>,
+        audio_format: AudioFormat,
         shutdown: CancellationToken,
     ) -> Self {
         Self {
             hub,
             detect,
             motion,
+            audio,
             video_config,
+            audio_format,
             viewers: Arc::new(AtomicUsize::new(0)),
             shutdown,
         }
@@ -95,6 +106,7 @@ pub fn router(state: AppState) -> Router {
         .route("/", get(index))
         .route("/stream.mjpeg", get(stream_mjpeg))
         .route("/snapshot.jpg", get(snapshot))
+        .route("/audio", get(audio))
         .route("/healthz", get(healthz))
         .route("/detections", get(detections))
         .route("/events", get(events))
@@ -139,6 +151,21 @@ async fn healthz(State(state): State<AppState>) -> Response {
         ),
     };
 
+    let (audio_state, audio_listeners, audio_format) = match &state.audio {
+        None => ("off".to_string(), 0, "off".to_string()),
+        Some(audio_hub) => {
+            let format = match state.audio_format {
+                AudioFormat::WebmOpus => "webm-opus",
+                AudioFormat::AdtsAac => "adts-aac",
+            };
+            (
+                audio_hub.state().as_str().to_string(),
+                audio_hub.listener_count() as u64,
+                format.to_string(),
+            )
+        }
+    };
+
     let body = HealthzResponse {
         uptime_secs: stats.uptime.as_secs_f64(),
         frames_captured: stats.frames_captured,
@@ -149,6 +176,9 @@ async fn healthz(State(state): State<AppState>) -> Response {
         seconds_since_last_detection: detect_since,
         motion: motion_state,
         motion_events,
+        audio: audio_state,
+        audio_format,
+        audio_listeners,
     };
 
     (
@@ -246,6 +276,92 @@ fn encode_part(frame: &Bytes) -> Bytes {
     out.extend_from_slice(frame);
     out.extend_from_slice(b"\r\n");
     Bytes::from(out)
+}
+
+/// Live microphone audio, as one long chunked response an `<audio>` element
+/// can play directly.
+///
+/// Connecting here is also what *starts* the microphone: the listener guard
+/// is what the supervisor waits on (see `audio`'s module doc comment), so
+/// this handler normally spends a moment waiting for the stream to come up
+/// before it can send anything.
+async fn audio(State(state): State<AppState>) -> Response {
+    let Some(audio_hub) = state.audio.clone() else {
+        let body = serde_json::to_string(&ErrorResponse {
+            error: "audio is not enabled".into(),
+        })
+        .expect("ErrorResponse serialization is infallible");
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(header::CONTENT_TYPE, "application/json")],
+            body,
+        )
+            .into_response();
+    };
+
+    // Constructed here rather than inside the generator for the reason
+    // documented on `DisconnectLog` - and here a leaked listener would also
+    // hold the microphone open indefinitely.
+    let guard = audio_hub.listen();
+    let mut init_rx = audio_hub.init();
+    let shutdown = state.shutdown.clone();
+
+    let body_stream = async_stream::stream! {
+        let _guard = guard;
+
+        // The header the decoder needs before any chunk means anything.
+        let init = loop {
+            if let Some(init) = init_rx.borrow_and_update().clone() {
+                break init;
+            }
+            tokio::select! {
+                _ = shutdown.cancelled() => return,
+                changed = init_rx.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                }
+            }
+        };
+
+        // Subscribed only now, so anything still buffered from a previous
+        // run of the microphone - which this header does not describe - is
+        // dropped rather than played as noise.
+        let mut chunks = audio_hub.subscribe();
+        yield Ok::<Bytes, std::io::Error>(init.bytes.clone());
+
+        loop {
+            tokio::select! {
+                // Racing against `shutdown` is what lets the server close
+                // this connection itself on exit; see `AppState::shutdown`.
+                _ = shutdown.cancelled() => break,
+                // The microphone restarted or stopped. Everything after
+                // this point belongs to a different stream, so end the
+                // response and let the browser reconnect for a fresh one.
+                _ = init_rx.changed() => {
+                    tracing::debug!(
+                        generation = init.generation,
+                        "audio stream ended; closing listener"
+                    );
+                    break;
+                }
+                r = chunks.recv() => match r {
+                    Ok(chunk) => yield Ok(chunk),
+                    Err(RecvError::Lagged(skipped)) => {
+                        tracing::debug!(skipped, "listener fell behind; dropping older audio");
+                    }
+                    Err(RecvError::Closed) => break,
+                }
+            }
+        }
+    };
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, state.audio_format.content_type())
+        .header(header::CACHE_CONTROL, "no-store, no-cache, private")
+        .body(Body::from_stream(body_stream))
+        .expect("static header values are always valid")
 }
 
 /// Mirrors [`DisconnectLog`] for `/detections` viewers: closing the overlay

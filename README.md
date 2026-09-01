@@ -11,9 +11,10 @@ local network - v1 of a baby monitor. It serves an MJPEG stream (plain
 It can also run a simple person detector against the live feed, overlay the
 boxes on the stream, and turn sustained movement into `motion_started`/
 `motion_stopped` events - see "Person detection" and "Motion events" below.
-Sound detection, recording, auth, and HTTPS are still not part of this
-version; see "Out of scope" in the plan this was built from if you're
-picking this back up later.
+With `--audio` it also streams a microphone alongside the video - see
+"Audio" below. Sound *detection* (crying alerts), recording, auth, and
+HTTPS are still not part of this version; see "Out of scope" in the plan
+this was built from if you're picking this back up later.
 
 ## Building
 
@@ -39,8 +40,10 @@ faster since only changed code gets recompiled.
 cargo build
 ```
 
-No extra system packages are required: the `v4l` crate talks to V4L2
-directly via raw ioctls (no `libv4l-dev` dependency).
+No extra system packages are required for video: the `v4l` crate talks to
+V4L2 directly via raw ioctls (no `libv4l-dev` dependency). `--audio` is the
+one exception - it shells out to `ffmpeg`, which has to be installed
+separately (`sudo apt install ffmpeg`).
 
 ## Running
 
@@ -74,9 +77,13 @@ quality, bind address, ...).
 - `/stream.mjpeg` - the live MJPEG stream directly, if you want to point
   `ffmpeg`, VLC, or another client at it instead of a browser.
 - `/snapshot.jpg` - the single most recent frame.
+- `/audio` - the live microphone, as one long chunked response. Returns 503
+  if `--audio` wasn't passed. Point a player straight at it with
+  `ffplay http://<host>:8080/audio` - see "Audio" below.
 - `/healthz` - JSON status: uptime, frames captured, current viewer count,
   seconds since the last frame, and (with `--detect`) detection state,
-  latest inference time, and seconds since the last detection pass.
+  latest inference time, and seconds since the last detection pass, plus
+  (with `--audio`) microphone state and listener count.
 - `/detections` - `text/event-stream` (SSE) of the latest detection pass,
   boxes normalized to a 0..1 fraction of the source frame so the client
   never needs to know the capture resolution. Returns 503 if `--detect`
@@ -236,6 +243,46 @@ setups shouldn't need to touch these):
 If motion is either too twitchy or too slow to notice real movement, watch
 the logged `score` field against `--motion-threshold` (`RUST_LOG=info`
 already shows it) before reaching for a different grid size or pixel delta.
+
+## Audio (optional)
+
+`--audio` streams a microphone to the browser, played by a Listen button on
+the viewer page. It is completely independent of the camera: neither a Pi
+nor the CSI camera module has a microphone, so this means a USB one (a USB
+webcam's built-in mic works - it enumerates as its own ALSA device, separate
+from its video node).
+
+```bash
+# `arecord -l` first, to find the card and device numbers
+cargo run --release -- --audio --audio-device plughw:1,0
+```
+
+`ffmpeg` must be on `PATH`; the server refuses to start without it rather
+than coming up with a silently dead microphone. `just check-mic` records
+three seconds through the same pipeline and plays it back, which is worth
+doing before blaming the app.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--audio` | off | Enable microphone streaming. |
+| `--audio-device` | `default` | ALSA device. Prefer `plughw:N,0` over `hw:N,0` - it lets ALSA convert formats, and cheap mics often support only one. |
+| `--audio-rate` | 48000 | Sample rate in Hz. |
+| `--audio-bitrate` | 32000 | Encoder bitrate. 32k mono Opus is already ample for room audio. |
+| `--audio-format` | `webm-opus` | Or `adts-aac`, for Safari older than iOS 17.4. |
+
+Two things worth knowing:
+
+- **The microphone is only open while somebody is listening.** Nobody on
+  `/audio` means no subprocess, which matters on a Pi already spending its
+  CPU budget on inference. It stays open for 5s after the last listener
+  leaves, so a page reload doesn't cost a device reopen.
+- **Audio-video sync.** MJPEG carries no audio track, so the two are
+  separate streams. The Leptos frontend (`/v2`) plays audio through
+  MediaSource Extensions and pins playback to the live edge of its buffer,
+  keeping it within a fraction of a second of the picture; browsers without
+  MSE (older iOS Safari) fall back to a plain `<audio src>` and drift
+  behind. The legacy vanilla-JS page at `/` always uses the plain element
+  and still lags.
 
 ## Deploying as a service
 

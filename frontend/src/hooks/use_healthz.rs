@@ -21,6 +21,14 @@ pub struct HealthzState {
     pub detect_available: Memo<bool>,
     /// True when `motion == "active"`.
     pub motion_active: Memo<bool>,
+    /// True when the server was started with `--audio`. Unlike detection
+    /// there is no "loading" state to wait out — the microphone opens on
+    /// demand, so anything other than `"off"` means Listen will work.
+    pub audio_available: Memo<bool>,
+    /// What `/audio` serves (`"webm-opus" | "adts-aac" | ...`), `None` before
+    /// the first poll or from a server too old to report it. Lets the audio
+    /// hook pick a transport instead of guessing.
+    pub audio_format: Memo<Option<String>>,
     /// Whether the server is currently unreachable (last poll failed).
     pub offline: ReadSignal<bool>,
 }
@@ -187,6 +195,14 @@ pub fn use_healthz(on_reconnect: impl Fn() + Clone + 'static) -> HealthzState {
     let motion_active =
         Memo::new(move |_| last.get().map(|d| d.motion == "active").unwrap_or(false));
 
+    let audio_available = Memo::new(move |_| last.get().map(|d| d.audio != "off").unwrap_or(false));
+
+    let audio_format = Memo::new(move |_| {
+        last.get()
+            .map(|d| d.audio_format.clone())
+            .filter(|f| f != "off")
+    });
+
     HealthzState {
         last: last.into(),
         since_text,
@@ -195,6 +211,8 @@ pub fn use_healthz(on_reconnect: impl Fn() + Clone + 'static) -> HealthzState {
         is_stale,
         detect_available,
         motion_active,
+        audio_available,
+        audio_format,
         offline: offline.into(),
     }
 }

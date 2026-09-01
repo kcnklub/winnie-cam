@@ -7,7 +7,7 @@
 //! EventSource is opened; when detection closes, it is torn down and any
 //! active alert is cleared.
 
-use crate::utils::audio::{use_chime, UseChimeReturn};
+use crate::utils::audio::{UseChimeReturn, use_chime};
 use leptos::prelude::*;
 use shared_types::{MotionEvent, MotionSnapshot};
 use wasm_bindgen::JsCast;
@@ -177,12 +177,10 @@ pub fn use_events(detect_is_open: ReadSignal<bool>) -> MotionState {
             set_is_moving.set(moving);
             events.set(evs.clone());
 
-            let max_seq = evs
-                .iter()
-                .fold(-1i64, |m, e| {
-                    let s = e.seq as i64;
-                    if s > m { s } else { m }
-                });
+            let max_seq = evs.iter().fold(-1i64, |m, e| {
+                let s = e.seq as i64;
+                if s > m { s } else { m }
+            });
 
             if !seeded_alerts.get_untracked() {
                 // First snapshot after page load: absorb history silently.
@@ -192,8 +190,7 @@ pub fn use_events(detect_is_open: ReadSignal<bool>) -> MotionState {
                 // seq reset = server restart. Re-alert on the latest
                 // started event.
                 last_alerted_seq.set(-1);
-                let started_events: Vec<_> =
-                    evs.iter().filter(|e| e.kind == "started").collect();
+                let started_events: Vec<_> = evs.iter().filter(|e| e.kind == "started").collect();
                 if let Some(latest) = started_events.last() {
                     last_alerted_seq.set(latest.seq as i64);
                     show_alert((*latest).clone());
@@ -253,10 +250,8 @@ pub fn use_events(detect_is_open: ReadSignal<bool>) -> MotionState {
                     }
                 }) as Box<dyn FnMut(web_sys::MessageEvent)>)
             };
-            let _ = source.add_event_listener_with_callback(
-                "snapshot",
-                snapshot_cb.as_ref().unchecked_ref(),
-            );
+            let _ = source
+                .add_event_listener_with_callback("snapshot", snapshot_cb.as_ref().unchecked_ref());
             snapshot_cb.forget();
 
             // `motion` event handler.
@@ -270,10 +265,8 @@ pub fn use_events(detect_is_open: ReadSignal<bool>) -> MotionState {
                     }
                 }) as Box<dyn FnMut(web_sys::MessageEvent)>)
             };
-            let _ = source.add_event_listener_with_callback(
-                "motion",
-                motion_cb.as_ref().unchecked_ref(),
-            );
+            let _ = source
+                .add_event_listener_with_callback("motion", motion_cb.as_ref().unchecked_ref());
             motion_cb.forget();
 
             // EventSource auto-reconnects on its own — no need for an

@@ -1,3 +1,4 @@
+mod audio;
 mod capture;
 mod config;
 mod detect;
@@ -13,6 +14,7 @@ use clap::Parser;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 
+use audio::hub::AudioHub;
 use config::{Config, SharedVideoConfig, SourceKind};
 use hub::FrameHub;
 
@@ -57,6 +59,23 @@ async fn main() -> anyhow::Result<()> {
         None => (None, None),
     };
 
+    // Independent of both capture and detection: audio comes from its own
+    // ALSA device, and its subprocess only runs while somebody is listening
+    // (see `audio`'s module doc comment).
+    let audio = audio::build(&cfg)?;
+    let (audio_hub, audio_task) = match audio {
+        Some(source) => {
+            let audio_hub = AudioHub::new();
+            let task = tokio::spawn(audio::supervise_on_demand(
+                source,
+                audio_hub.clone(),
+                shutdown.clone(),
+            ));
+            (Some(audio_hub), Some(task))
+        }
+        None => (None, None),
+    };
+
     let listener = tokio::net::TcpListener::bind(cfg.bind)
         .await
         .with_context(|| format!("binding to {}", cfg.bind))?;
@@ -66,7 +85,9 @@ async fn main() -> anyhow::Result<()> {
         hub,
         detect_hub,
         motion_hub,
+        audio_hub,
         video_config,
+        cfg.audio_format,
         shutdown.clone(),
     ));
     let server_shutdown = shutdown.clone();
@@ -84,6 +105,9 @@ async fn main() -> anyhow::Result<()> {
         .context("capture supervisor task panicked")?;
     if let Some(d) = detection {
         d.join().await.context("detection task panicked")?;
+    }
+    if let Some(task) = audio_task {
+        task.await.context("audio supervisor task panicked")?;
     }
 
     Ok(())

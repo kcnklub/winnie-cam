@@ -38,6 +38,41 @@ If instead you're using a USB webcam, just confirm it enumerates:
 ssh "$PI_HOST" v4l2-ctl --list-devices
 ```
 
+### Set up the microphone (optional, for `--audio`)
+
+Skip this if you don't want room audio. Neither the CSI camera module nor a
+Pi has a microphone, so this means a USB one (a USB webcam's built-in mic
+counts - it enumerates as a separate ALSA device from its video node).
+
+Audio streaming is the one feature that needs a package Pi OS doesn't ship:
+
+```bash
+ssh "$PI_HOST" sudo apt install -y ffmpeg
+```
+
+Find the card and device numbers for `--audio-device`:
+
+```bash
+ssh "$PI_HOST" arecord -l
+```
+
+A line like `card 1: Device [USB Audio Device], device 0:` means
+`--audio-device plughw:1,0`. Prefer `plughw:` over `hw:` - it lets ALSA
+convert sample formats, and many cheap USB mics support only one.
+
+Confirm the mic actually records before involving the app, so a silent
+stream later is unambiguous:
+
+```bash
+ssh "$PI_HOST" arecord -D plughw:1,0 -d 3 -f cd /tmp/mic-test.wav
+```
+
+Finally, add the user to the `audio` group, the same way as `video` below:
+
+```bash
+ssh "$PI_HOST" sudo usermod -aG audio "$(whoami)"
+```
+
 ### Install Rust via rustup
 
 Raspberry Pi OS's packaged `rustc` is too old for this crate's 2024

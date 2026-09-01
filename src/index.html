@@ -450,6 +450,12 @@
       <button id="detect-toggle" class="btn btn-wide" type="button" aria-pressed="false" title="Also enables motion alerts" hidden>
         <span id="detect-dot" class="dot"></span><span id="detect-label">Detect</span>
       </button>
+      <button id="listen-toggle" class="btn btn-wide" type="button" aria-pressed="false" title="Play the microphone from the camera" hidden>
+        <span id="listen-dot" class="dot"></span><span id="listen-label">Listen</span>
+      </button>
+      <!-- preload="none" matters: without it the browser opens the stream,
+           and so the microphone, on page load. -->
+      <audio id="listen-audio" preload="none"></audio>
       <a id="snap" class="btn btn-wide" href="/snapshot.jpg" download="winnie.jpg" aria-disabled="true">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M4 8h3l2-2h6l2 2h3v11H4z"/><circle cx="12" cy="13" r="3.2"/>
@@ -589,6 +595,8 @@
   const canvas = document.getElementById('overlay');
   const ctx = canvas.getContext('2d');
   const toggle = document.getElementById('detect-toggle');
+  const listenToggle = document.getElementById('listen-toggle');
+  const listenAudio = document.getElementById('listen-audio');
   const exitImmersiveBtn = document.getElementById('exit-immersive');
   const snap = document.getElementById('snap');
   const dimBtn = document.getElementById('dim');
@@ -720,6 +728,12 @@
       const available = data.detect === 'ready';
       toggle.hidden = !available;
       if (!available && detectOpen()) stopDetect();
+
+      // Audio needs no "ready" equivalent: the microphone opens on demand,
+      // so anything other than 'off' means Listen will work.
+      const audioAvailable = data.audio !== 'off';
+      listenToggle.hidden = !audioAvailable;
+      if (!audioAvailable && listening) stopListening();
 
       // Motion has no separate flag server-side - it rides along with
       // person detection (see --detect's help text) - so it uses the same
@@ -1188,6 +1202,48 @@
   toggle.addEventListener('click', function () {
     if (detectOpen()) stopDetect(); else startDetect();
   });
+
+  // --- Listen (microphone) ------------------------------------------------
+  //
+  // Kept imperative and gesture-driven: browsers only allow play() from
+  // inside a user gesture, and clearing src + load() is what actually
+  // aborts the request - which is what tells the server to release the
+  // microphone, since it closes the device when the last listener leaves.
+
+  let listening = false;
+  let listenSeed = 0;
+
+  function startListening() {
+    listening = true;
+    listenSeed += 1;
+    listenAudio.src = '/audio?ts=' + listenSeed; // cache-bust, as connect() does
+    listenAudio.play().catch(function () { /* reported via 'error' below */ });
+    listenToggle.classList.add('on');
+    listenToggle.setAttribute('aria-pressed', 'true');
+  }
+
+  function stopListening() {
+    listening = false;
+    listenAudio.pause();
+    listenAudio.removeAttribute('src');
+    listenAudio.load();
+    listenToggle.classList.remove('on');
+    listenToggle.setAttribute('aria-pressed', 'false');
+  }
+
+  listenToggle.addEventListener('click', function () {
+    if (listening) stopListening(); else startListening();
+  });
+
+  // The server ends the response whenever the microphone restarts, which
+  // arrives as 'ended' rather than an error. Either way, reconnect if the
+  // user still wants to listen.
+  function relisten() {
+    if (!listening) return;
+    setTimeout(function () { if (listening) startListening(); }, 2000);
+  }
+  listenAudio.addEventListener('error', relisten);
+  listenAudio.addEventListener('ended', relisten);
 
   window.addEventListener('resize', drawOverlay);
   if (window.ResizeObserver) {

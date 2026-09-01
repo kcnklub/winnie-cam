@@ -1,9 +1,10 @@
 use components::bar::Bar;
-use components::controls::DetectToggle;
+use components::controls::{DetectToggle, ListenToggle};
 use components::footer::Footer;
 use components::motion_alert::MotionAlert;
 use components::motion_panel::MotionPanel;
 use components::stage::Stage;
+use hooks::use_audio::use_audio;
 use hooks::use_detections::use_detections;
 use hooks::use_events::use_events;
 use hooks::use_healthz::use_healthz;
@@ -35,6 +36,13 @@ pub fn App() -> impl IntoView {
     });
 
     let detect_available = healthz.detect_available;
+    let audio_available = healthz.audio_available;
+
+    // ── Microphone ───────────────────────────────────────────────────
+    // Independent of detection: audio comes from its own device and its
+    // own endpoint, so the two toggles never gate each other. The format
+    // tells the hook whether MSE playback is possible.
+    let audio = use_audio(healthz.audio_format);
 
     // ── Detection + overlay ──────────────────────────────────────────
     let det = use_detections(detect_available);
@@ -84,6 +92,13 @@ pub fn App() -> impl IntoView {
                     available={detect_available.into()}
                     is_open={det.is_open}
                     on_toggle={det.toggle}
+                />
+                <ListenToggle
+                    available={audio_available.into()}
+                    is_on={audio.is_on}
+                    on_toggle={audio.toggle}
+                    audio_ref={audio.audio_ref}
+                    on_interrupted={audio.on_interrupted}
                 />
             </div>
             <Footer
