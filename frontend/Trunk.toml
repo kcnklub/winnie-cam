@@ -26,3 +26,7 @@ backend = "http://127.0.0.1:8080/events"
 # Long-lived multipart MJPEG stream (use_mjpeg.rs).
 [[proxy]]
 backend = "http://127.0.0.1:8080/stream.mjpeg"
+
+# Camera settings, GET and PUT (use_config.rs).
+[[proxy]]
+backend = "http://127.0.0.1:8080/api/config"

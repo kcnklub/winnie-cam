@@ -89,8 +89,24 @@ pub struct MotionSnapshot {
 
 // ── /api/config ────────────────────────────────────────────────────────
 
-/// Full camera config, returned by `GET /api/config` and echoed back by
-/// `PUT /api/config` after a successful update.
+/// Body of `GET /api/config`, and of a successful `PUT /api/config`: the
+/// current settings plus which capture backend is running. Clients need
+/// the backend kind because `quality`, `hflip` and `vflip` only take
+/// effect on `rpicam` (a USB webcam encodes MJPEG on-device).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CameraConfig {
+    /// `"rpicam"` or `"v4l2"`.
+    pub backend: String,
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    pub quality: u8,
+    pub hflip: bool,
+    pub vflip: bool,
+}
+
+/// The mutable camera settings the server owns. Sent to clients wrapped in
+/// a [`CameraConfig`], which adds the read-only `backend` field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VideoSettings {
     pub width: u32,

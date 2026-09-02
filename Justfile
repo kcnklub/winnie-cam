@@ -71,8 +71,12 @@ dev: check-trunk
         exit 1
     fi
 
+    # No --proxy-backend: that mounts a proxy at "/" which shadows trunk's
+    # static assets, so every request returns the backend's legacy inline
+    # HTML instead of the Leptos app. The per-endpoint rules in
+    # frontend/Trunk.toml cover the API paths instead.
     cd frontend
-    trunk serve --dist dist-dev --port 8081 --proxy-backend=http://127.0.0.1:8080
+    trunk serve --dist dist-dev --port 8081
 
 # Run backend only (serves the prebuilt frontend/dist/ at /v2)
 serve:

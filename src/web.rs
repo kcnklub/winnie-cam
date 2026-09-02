@@ -20,7 +20,7 @@ use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tower_http::services::ServeDir;
 
-use shared_types::{ErrorResponse, HealthzResponse, VideoSettingsUpdate};
+use shared_types::{CameraConfig, ErrorResponse, HealthzResponse, VideoSettingsUpdate};
 
 use crate::config::{SharedVideoConfig, SourceKind};
 use crate::detect::hub::DetectionHub;
@@ -429,16 +429,16 @@ async fn get_config(State(state): State<AppState>) -> Response {
         SourceKind::Rpicam | SourceKind::Auto => "rpicam",
         SourceKind::V4l2 => "v4l2",
     };
-    let body = serde_json::json!({
-        "backend": backend,
-        "width": settings.width,
-        "height": settings.height,
-        "fps": settings.fps,
-        "quality": settings.quality,
-        "hflip": settings.hflip,
-        "vflip": settings.vflip,
+    let body = serde_json::to_string(&CameraConfig {
+        backend: backend.to_string(),
+        width: settings.width,
+        height: settings.height,
+        fps: settings.fps,
+        quality: settings.quality,
+        hflip: settings.hflip,
+        vflip: settings.vflip,
     })
-    .to_string();
+    .expect("CameraConfig serialization is infallible");
     ([(header::CONTENT_TYPE, "application/json")], body).into_response()
 }
 

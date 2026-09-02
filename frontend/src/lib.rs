@@ -1,9 +1,11 @@
 use components::bar::Bar;
-use components::controls::DetectToggle;
+use components::controls::{DetectToggle, SettingsButton};
 use components::footer::Footer;
 use components::motion_alert::MotionAlert;
 use components::motion_panel::MotionPanel;
+use components::settings_panel::SettingsPanel;
 use components::stage::Stage;
+use hooks::use_config::use_config;
 use hooks::use_detections::use_detections;
 use hooks::use_events::use_events;
 use hooks::use_healthz::use_healthz;
@@ -46,6 +48,25 @@ pub fn App() -> impl IntoView {
 
     use_overlay(canvas_ref, img_ref, stage_ref, det.latest_payload);
 
+    // ── Camera settings ──────────────────────────────────────────────
+    let settings_open: RwSignal<bool> = RwSignal::new(false);
+    let config = use_config(Callback::new(move |()| settings_open.set(false)));
+
+    // Port of `openSettings()` / `closeSettings()`. Opening refetches so
+    // the form always starts from the server's truth, but doesn't wait on
+    // that fetch — a slow or dead server must not block the panel.
+    let toggle_settings = Callback::new(move |()| {
+        if settings_open.get_untracked() {
+            settings_open.set(false);
+            return;
+        }
+
+        config.fetch.run(());
+        config.error.set(None);
+        config.status.set(None);
+        settings_open.set(true);
+    });
+
     // ── Presence text ────────────────────────────────────────────────
     let presence_text: Memo<String> = Memo::new(move |_| {
         if !det.is_open.get() {
@@ -85,6 +106,14 @@ pub fn App() -> impl IntoView {
                     is_open={det.is_open}
                     on_toggle={det.toggle}
                 />
+                <SettingsButton is_open={settings_open} on_toggle={toggle_settings} />
+            </div>
+            <SettingsPanel is_open={settings_open} config={config} />
+            <div
+                class="settings-panel-status"
+                hidden={move || config.status.get().is_none()}
+            >
+                {move || config.status.get().unwrap_or_default()}
             </div>
             <Footer
                 healthz={healthz}
