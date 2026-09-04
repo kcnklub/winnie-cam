@@ -39,8 +39,17 @@ faster since only changed code gets recompiled.
 cargo build
 ```
 
-No extra system packages are required: the `v4l` crate talks to V4L2
-directly via raw ioctls (no `libv4l-dev` dependency).
+No extra system packages are required on Linux: the `v4l` crate talks to
+V4L2 directly via raw ioctls (no `libv4l-dev` dependency).
+
+V4L2 is a Linux kernel API, so the `v4l` dependency and the `v4l2` capture
+backend only exist on Linux builds (see the `[target.'cfg(target_os =
+"linux")'.dependencies]` section of `Cargo.toml`) - `cargo build` still
+works on macOS, but only the `rpicam` backend is available there, and
+neither `--source v4l2` nor `--source auto` falling back to it will start.
+Use macOS for editing/checking (`cargo build`, `cargo clippy`, `cargo
+test`); do real capture testing on Linux (the Pi, or a Linux laptop/VM with
+a USB webcam).
 
 ## Running
 
