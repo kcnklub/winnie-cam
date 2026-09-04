@@ -22,9 +22,15 @@ serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
-v4l = "0.14"
 tract-onnx = "0.22"
 zune-jpeg = "0.5"
+
+# V4L2 is a Linux kernel API (linux/videodev2.h) - the crate's build script
+# can't generate bindings for it on any other OS, so it's kept off the
+# dependency graph entirely on non-Linux targets. See `capture::v4l2` and
+# `capture::build`'s SourceKind::V4l2 arm for the matching source gate.
+[target.'cfg(target_os = "linux")'.dependencies]
+v4l = "0.14"
 
 [[bin]]
 name = "winnie-cam"

@@ -14,23 +14,18 @@ pub fn Footer(
     #[prop(optional)] motion_panel_expanded: Option<RwSignal<bool>>,
     #[prop(optional)] detect_available: Option<Memo<bool>>,
 ) -> impl IntoView {
-    let motion_label = Memo::new(move |_| {
-        match motion_is_moving {
-            Some(ref s) if s.get() => "Moving",
-            _ => "Still",
-        }
+    let motion_label = Memo::new(move |_| match motion_is_moving {
+        Some(ref s) if s.get() => "Moving",
+        _ => "Still",
     });
 
-    let motion_btn_class = Memo::new(move |_| {
-        match motion_is_moving {
-            Some(ref s) if s.get() => "motion-btn active",
-            _ => "motion-btn",
-        }
+    let motion_btn_class = Memo::new(move |_| match motion_is_moving {
+        Some(ref s) if s.get() => "motion-btn active",
+        _ => "motion-btn",
     });
 
-    let motion_visible = Memo::new(move |_| {
-        detect_available.as_ref().map(|m| m.get()).unwrap_or(false)
-    });
+    let motion_visible =
+        Memo::new(move |_| detect_available.as_ref().map(|m| m.get()).unwrap_or(false));
 
     let on_motion_click = {
         let expanded = motion_panel_expanded;

@@ -6,6 +6,9 @@
 //! is chosen running, restarting it after a failure.
 
 pub mod rpicam;
+// V4L2 is a Linux kernel API - see the Cargo.toml comment above the `v4l`
+// dependency for why this module doesn't even exist on other platforms.
+#[cfg(target_os = "linux")]
 pub mod v4l2;
 
 use std::future::Future;
@@ -111,10 +114,16 @@ pub fn build(
         SourceKind::Rpicam => Ok(Box::new(rpicam::RpicamCapture::from_config(Arc::clone(
             video_config,
         ))?)),
+        #[cfg(target_os = "linux")]
         SourceKind::V4l2 => Ok(Box::new(
             v4l2::V4l2Capture::from_config(Arc::clone(video_config))
                 .with_device(cfg.device.clone()),
         )),
+        #[cfg(not(target_os = "linux"))]
+        SourceKind::V4l2 => anyhow::bail!(
+            "the V4L2 backend is Linux-only (V4L2 is a Linux kernel API); \
+             build and run on Linux, or use --source rpicam"
+        ),
         SourceKind::Auto => unreachable!("resolved above"),
     }
 }
